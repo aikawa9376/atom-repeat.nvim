@@ -55,12 +55,17 @@ function M.run(entries, count, callback)
         end
       end
     end, debug.traceback)
-    capture.set_replaying(false)
-    if not call_ok then
-      callback(false, call_error)
-    else
-      callback(replay_ok, failure)
-    end
+    -- CmdAtom is deferred. Keep replay capture disabled until events produced
+    -- by the fed keys have had a chance to run; otherwise a trailing insert
+    -- Atom can arrive after `feedkeys()` returns and leak into history.
+    vim.schedule(function()
+      capture.set_replaying(false)
+      if not call_ok then
+        callback(false, call_error)
+      else
+        callback(replay_ok, failure)
+      end
+    end)
   end)
 end
 

@@ -465,6 +465,33 @@ test("history UI replays keys at the origin and does not capture itself", functi
   truthy(recipe_bucket and #recipe_bucket.recipes == 1, "successful history replay should save one recipe")
 end)
 
+test("insert atoms produced by replay and dot-repeat are not captured", function()
+  reset_history()
+  local origin = fresh_buffer({ "" })
+  vim.api.nvim_input(vim.keycode("itest<Esc>"))
+  wait_for(function()
+    local bucket = current_bucket()
+    return bucket and #bucket.entries == 1
+  end, "initial insert should be captured")
+
+  vim.api.nvim_buf_set_lines(origin, 0, -1, false, { "" })
+  vim.api.nvim_win_set_cursor(0, { 1, 0 })
+  atom_repeat.open()
+  vim.api.nvim_input(vim.keycode("<CR>"))
+  wait_for(function()
+    return state.ui == nil and vim.api.nvim_get_current_line() == "test"
+  end, "insert replay should execute")
+  sleep(150)
+  eq(1, #current_bucket().entries, "insert produced by replay should be suppressed")
+
+  vim.api.nvim_input(".")
+  wait_for(function()
+    return vim.api.nvim_get_current_line() == "testestt"
+  end, "dot should repeat the insert recipe")
+  sleep(150)
+  eq(1, #current_bucket().entries, "insert produced by dot-repeat should be suppressed")
+end)
+
 test("Visual-line history selection replays the range in chronological order", function()
   reset_history()
   local origin = fresh_buffer({ "abc def" })
