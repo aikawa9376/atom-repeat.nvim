@@ -1,4 +1,6 @@
 local atom_repeat = require("atom-repeat")
+local dot = require("atom-repeat.dot")
+local recipes = require("atom-repeat.recipes")
 local replay = require("atom-repeat.replay")
 local scope = require("atom-repeat.scope")
 local state = require("atom-repeat.state")
@@ -62,10 +64,28 @@ local function reset_history()
   if state.ui then
     require("atom-repeat.ui").close(false)
   end
+  if state.recipe_ui then
+    require("atom-repeat.recipe_ui").close(false)
+  end
   store.clear_all()
+  recipes.clear_all()
   state.suppress_tokens = {}
   state.replaying = false
   state.motion_run = { bucket_id = nil, count = 0 }
+end
+
+local function replay_group(value, label)
+  return {
+    atoms = { {
+      seq = 1,
+      atom = { type = "command", keys = value, cmd = label or value },
+      context = { buffer_display = "test" },
+      replay_kind = "keys",
+      replay_value = value,
+    } },
+    created_at = os.time(),
+    repeatable = true,
+  }
 end
 
 local function fresh_buffer(lines)
@@ -83,6 +103,30 @@ end
 local function run_suite()
 atom_repeat.setup({ history_size = 500, max_buckets = 20, ui = { height = 12 } })
 
+test("public dot-repeat interface repeats Plug mappings and honors counts", function()
+  local buffer = fresh_buffer({ "x" })
+  vim.keymap.set("n", "<Plug>(AtomRepeatTestAppend)", function()
+    local count = vim.v.count1
+    vim.api.nvim_set_current_line(vim.api.nvim_get_current_line() .. string.rep("!", count))
+    atom_repeat.set_repeat("<Plug>(AtomRepeatTestAppend)", { count = count })
+  end)
+
+  vim.api.nvim_feedkeys(vim.keycode("<Plug>(AtomRepeatTestAppend)"), "mx", false)
+  eq("x!", vim.api.nvim_buf_get_lines(buffer, 0, 1, false)[1], "initial Plug action")
+  vim.api.nvim_feedkeys(".", "mx", false)
+  eq("x!!", vim.api.nvim_buf_get_lines(buffer, 0, 1, false)[1], "dot should repeat the registered action")
+  vim.api.nvim_feedkeys("3.", "mx", false)
+  eq("x!!!!!", vim.api.nvim_buf_get_lines(buffer, 0, 1, false)[1], "an explicit dot count should replace the default")
+  eq("builtin", dot.backend(), "self-contained backend")
+
+  vim.api.nvim_feedkeys(vim.keycode("A?<Esc>"), "nx", false)
+  vim.api.nvim_feedkeys(".", "mx", false)
+  eq("x!!!!!??", vim.api.nvim_buf_get_lines(buffer, 0, 1, false)[1], "another change should restore native dot")
+
+  atom_repeat.invalidate_repeat()
+  vim.keymap.del("n", "<Plug>(AtomRepeatTestAppend)")
+end)
+
 test("configuration is strict and setup is idempotent", function()
   local ok, err = pcall(atom_repeat.setup, { history_size = 0 })
   truthy(not ok and tostring(err):find("positive integer", 1, true), "invalid capacity should fail")
@@ -90,6 +134,10 @@ test("configuration is strict and setup is idempotent", function()
   truthy(not ok and tostring(err):find("unknown option", 1, true), "unknown keys should fail")
   ok, err = pcall(atom_repeat.setup, { max_consecutive_motions = -1 })
   truthy(not ok and tostring(err):find("non%-negative"), "negative motion limits should fail")
+  ok, err = pcall(atom_repeat.setup, { recipes = { max_items = 0 } })
+  truthy(not ok and tostring(err):find("positive integer", 1, true), "invalid recipe limits should fail")
+  ok, err = pcall(atom_repeat.setup, { recipes = { persist = "yes" } })
+  truthy(not ok and tostring(err):find("boolean", 1, true), "invalid persistence flags should fail")
   atom_repeat.setup({ max_consecutive_motions = 0 })
   atom_repeat.setup({ max_consecutive_motions = false })
 
@@ -155,6 +203,34 @@ test("ring buffers and bucket LRU enforce both limits", function()
   atom_repeat.setup()
 end)
 
+test("saved recipes deduplicate, trim, and persist binary keys", function()
+  reset_history()
+  local directory = vim.fn.tempname()
+  local path = directory .. "/recipes.mpack"
+  atom_repeat.setup({ recipes = { max_items = 2, persist = true, path = path } })
+  local context = { id = "persist\0main", project = "persist", branch = "main" }
+  local binary = "x\000" .. string.char(128) .. "y"
+  recipes.add(context, replay_group("one", "one"))
+  local binary_recipe = recipes.add(context, replay_group(binary, "binary"))
+  recipes.add(context, replay_group("three", "three"))
+  eq(2, #recipes.get_bucket(context.id).recipes, "recipe MRU limit")
+  local duplicate = recipes.add(context, replay_group(binary, "binary"))
+  eq(binary_recipe.id, duplicate.id, "identical recipes should reuse their identity")
+  eq(2, #recipes.get_bucket(context.id).recipes, "deduplication should not grow the list")
+  truthy(vim.uv.fs_stat(path), "persistent recipe file should exist")
+
+  state.recipe_buckets = {}
+  state.recipes_loaded_path = nil
+  state.next_recipe_id = 1
+  atom_repeat.setup({ recipes = { max_items = 2, persist = true, path = path } })
+  local loaded = recipes.first(context.id)
+  eq(binary, loaded.atoms[1].replay_value, "MessagePack should preserve raw key bytes")
+  eq(binary_recipe.id, loaded.id, "recipe identity should survive reload")
+
+  atom_repeat.setup({ recipes = { persist = false } })
+  vim.fn.delete(directory, "rf")
+end)
+
 test("CmdAtom capture preserves structured mappings", function()
   reset_history()
   fresh_buffer({ "one two three" })
@@ -212,6 +288,38 @@ test("simple navigation runs retain only the configured prefix", function()
   atom_repeat.setup()
 end)
 
+test("callback mappings on navigation keys share the motion limit", function()
+  reset_history()
+  atom_repeat.setup({ max_consecutive_motions = 3 })
+  fresh_buffer({ "x" })
+  for _, key in ipairs({ "j", "k", "q" }) do
+    vim.keymap.set("n", key, function() end)
+  end
+
+  for _, key in ipairs({ "j", "k", "k", "k", "k" }) do
+    vim.api.nvim_input(key)
+    sleep(20)
+  end
+  local bucket = current_bucket()
+  eq(3, #bucket.entries, "callback navigation run should stop at three entries")
+  eq({ "j", "k", "k" }, vim.tbl_map(function(entry)
+    return entry.atom.lhs
+  end, bucket.entries), "callback navigation prefix")
+
+  vim.api.nvim_input("q")
+  sleep(20)
+  for _ = 1, 4 do
+    vim.api.nvim_input("k")
+    sleep(20)
+  end
+  eq(7, #current_bucket().entries, "a non-navigation callback should reset the run")
+  eq("q", current_bucket().entries[4].atom.lhs, "resetting callback")
+
+  for _, key in ipairs({ "j", "k", "q" }) do
+    vim.keymap.del("n", key)
+  end
+end)
+
 test("search commands and search repeats are captured as separate atoms", function()
   reset_history()
   fresh_buffer({ "alpha beta alpha" })
@@ -253,6 +361,86 @@ test("history columns use display width and receive highlights", function()
   require("atom-repeat.ui").close(false)
 end)
 
+test("history recipe supports Vim-style local cut and paste", function()
+  reset_history()
+  local context = scope.resolve(fresh_buffer({ "x" }))
+  store.add({ type = "motion", cmd = "h", keys = "h" }, context)
+  store.add({ type = "motion", cmd = "j", keys = "j" }, context)
+  store.add({ type = "motion", cmd = "k", keys = "k" }, context)
+  local bucket = current_bucket()
+  local original = vim.tbl_map(function(entry)
+    return entry.seq
+  end, bucket.entries)
+  vim.fn.setreg('"', "keep-me")
+
+  atom_repeat.open()
+  vim.api.nvim_input("gg2dd")
+  wait_for(function()
+    return state.ui and #state.ui.entries == 1
+  end, "counted dd should cut two entries")
+  eq({ original[3] }, vim.tbl_map(function(entry)
+    return entry.seq
+  end, state.ui.entries), "remaining recipe after dd")
+
+  vim.api.nvim_input("2p")
+  wait_for(function()
+    return #state.ui.entries == 5
+  end, "counted p should paste the local entry register twice")
+  eq({ original[3], original[1], original[2], original[1], original[2] }, vim.tbl_map(function(entry)
+    return entry.seq
+  end, state.ui.entries), "pasted recipe order")
+  eq(original, vim.tbl_map(function(entry)
+    return entry.seq
+  end, bucket.entries), "stored history must remain chronological")
+  eq("keep-me", vim.fn.getreg('"'), "history edits must not touch Vim registers")
+  require("atom-repeat.ui").close(false)
+end)
+
+test("AtomReplaySelect executes and persistently edits saved recipes", function()
+  reset_history()
+  atom_repeat.setup({ recipes = { max_items = 20, persist = false } })
+  fresh_buffer({ "x" })
+  local context = scope.resolve(vim.api.nvim_get_current_buf())
+  local first = recipes.add(context, replay_group("A1\027", "append-one"))
+  local second = recipes.add(context, replay_group("A2\027", "append-two"))
+  atom_repeat.select()
+  truthy(state.recipe_ui and #state.recipe_ui.items == 2, "recipe selector should open")
+  truthy(vim.api.nvim_get_current_line():find("A2", 1, true), "MRU recipe should be first")
+  vim.api.nvim_input(vim.keycode("<CR>"))
+  wait_for(function()
+    return state.recipe_ui == nil and vim.api.nvim_get_current_line() == "x2"
+  end, "selected recipe should execute at the origin")
+  eq(second.id, recipes.first(context.id).id, "executed recipe should remain MRU")
+
+  vim.api.nvim_set_current_line("x")
+  atom_repeat.replay_last()
+  wait_for(function()
+    return vim.api.nvim_get_current_line() == "x2"
+  end, "ReplayLast should use the persisted MRU recipe")
+
+  atom_repeat.select()
+  vim.fn.setreg('"', "keep-recipe-register")
+  vim.api.nvim_input("dd")
+  wait_for(function()
+    return #recipes.get_bucket(context.id).recipes == 1
+  end, "selector dd should delete from the recipe library")
+  eq(first.id, recipes.first(context.id).id, "remaining recipe after selector dd")
+  vim.api.nvim_input("p")
+  wait_for(function()
+    return #recipes.get_bucket(context.id).recipes == 2
+  end, "selector p should restore a cut recipe")
+  eq("keep-recipe-register", vim.fn.getreg('"'), "selector edits must not touch Vim registers")
+  truthy(recipes.get_bucket(context.id).recipes[2].id ~= second.id, "pasted recipe should receive a new identity")
+  require("atom-repeat.recipe_ui").close(false)
+
+  vim.cmd("AtomReplayClear")
+  truthy(not recipes.get_bucket(context.id), "AtomReplayClear should remove the current recipe bucket")
+  recipes.add(context, replay_group("A3\027", "append-three"))
+  recipes.add({ id = "other\0main", project = "other", branch = "main" }, replay_group("A4\027", "append-four"))
+  vim.cmd("AtomReplayClear!")
+  eq(0, vim.tbl_count(state.recipe_buckets), "AtomReplayClear! should remove every recipe bucket")
+end)
+
 test("history UI replays keys at the origin and does not capture itself", function()
   reset_history()
   local origin = fresh_buffer({ "one two three" })
@@ -273,6 +461,8 @@ test("history UI replays keys at the origin and does not capture itself", functi
   sleep(150)
   eq(1, #current_bucket().entries, "UI and replay actions should be suppressed")
   truthy(current_bucket().last_group, "successful replay should register a last group")
+  local recipe_bucket = recipes.get_bucket(scope.resolve(origin).id)
+  truthy(recipe_bucket and #recipe_bucket.recipes == 1, "successful history replay should save one recipe")
 end)
 
 test("Visual-line history selection replays the range in chronological order", function()
@@ -359,6 +549,10 @@ test("callback lhs replay and Plug count use the current mapping", function()
   wait_for(function()
     return vim.api.nvim_get_current_line() == "x??"
   end, "counted Plug replay")
+  vim.api.nvim_input(".")
+  wait_for(function()
+    return vim.api.nvim_get_current_line() == "x????"
+  end, "dot should repeat the last Atom group with its stored count")
   sleep(150)
   eq(1, #current_bucket().entries, "Plug invocation should be suppressed")
   vim.keymap.del("n", "R")

@@ -1,4 +1,6 @@
 local capture = require("atom-repeat.capture")
+local dot = require("atom-repeat.dot")
+local recipes = require("atom-repeat.recipes")
 local replay = require("atom-repeat.replay")
 local scope = require("atom-repeat.scope")
 local state = require("atom-repeat.state")
@@ -121,16 +123,15 @@ function M.close(focus_origin)
   end
 end
 
-local function render(session, snapshot)
-  session.bucket_id = snapshot.id
-  session.project = snapshot.project
-  session.branch = snapshot.branch
-  session.entries = snapshot.entries
-
+local function render_entries(session, cursor_line)
   local lines = {}
   local highlights = {}
-  for index, entry in ipairs(snapshot.entries) do
+  for index, entry in ipairs(session.entries) do
     lines[index], highlights[index] = format_entry(entry)
+  end
+  if #lines == 0 then
+    lines[1] = "  (empty replay recipe; press p/P to restore entries)"
+    highlights[1] = { { 0, #lines[1], "Comment" } }
   end
   vim.bo[session.buf].modifiable = true
   vim.api.nvim_buf_set_lines(session.buf, 0, -1, false, lines)
@@ -147,10 +148,20 @@ local function render(session, snapshot)
       end
     end
   end
-  vim.wo[session.win].winbar = (" atom-repeat: %s [%s] "):format(snapshot.project, snapshot.branch):gsub("%%", "%%%%")
+  vim.wo[session.win].winbar = (" atom-repeat: %s [%s] "):format(session.project, session.branch):gsub("%%", "%%%%")
   if #lines > 0 then
-    vim.api.nvim_win_set_cursor(session.win, { #lines, 0 })
+    cursor_line = math.max(1, math.min(cursor_line or #session.entries, #lines))
+    vim.api.nvim_win_set_cursor(session.win, { cursor_line, 0 })
   end
+end
+
+local function render(session, snapshot)
+  session.bucket_id = snapshot.id
+  session.project = snapshot.project
+  session.branch = snapshot.branch
+  session.entries = snapshot.entries
+  session.entry_register = session.entry_register or {}
+  render_entries(session, #snapshot.entries)
 end
 
 local function current_origin_position(session)
@@ -205,6 +216,11 @@ local function replay_range(first, last)
   end
 
   local bucket_id = session.bucket_id
+  local recipe_context = {
+    id = session.bucket_id,
+    project = session.project,
+    branch = session.branch,
+  }
   local origin_win = session.origin_win
   local group = {
     atoms = vim.deepcopy(entries),
@@ -217,11 +233,87 @@ local function replay_range(first, last)
   vim.api.nvim_win_set_cursor(origin_win, { position[1] + 1, position[2] })
   replay.run(group.atoms, 1, function(ok, replay_error)
     if ok then
-      store.set_last_group(bucket_id, group)
+      local saved = recipes.add(recipe_context, group)
+      store.set_last_group(bucket_id, saved)
+      dot.set("<Plug>(AtomReplayLast)", { count = 1 })
     else
       notify("replay stopped: " .. tostring(replay_error), vim.log.levels.ERROR)
     end
   end)
+end
+
+local function normalized_range(first, last)
+  first, last = math.min(first, last), math.max(first, last)
+  if first < 1 or last > #state.ui.entries then
+    return nil, nil
+  end
+  return first, last
+end
+
+local function yank_range(first, last)
+  local session = state.ui
+  first, last = normalized_range(first, last)
+  if not first then
+    return
+  end
+  session.entry_register = {}
+  for index = first, last do
+    session.entry_register[#session.entry_register + 1] = vim.deepcopy(session.entries[index])
+  end
+end
+
+local function delete_range(first, last)
+  local session = state.ui
+  first, last = normalized_range(first, last)
+  if not first then
+    return
+  end
+  yank_range(first, last)
+  for _ = first, last do
+    table.remove(session.entries, first)
+  end
+  render_entries(session, math.min(first, #session.entries))
+end
+
+local function pasted_entries(session, count)
+  local pasted = {}
+  for _ = 1, count do
+    for _, entry in ipairs(session.entry_register) do
+      pasted[#pasted + 1] = vim.deepcopy(entry)
+    end
+  end
+  return pasted
+end
+
+local function paste(after, first, last)
+  local session = state.ui
+  if not session or #session.entry_register == 0 then
+    notify("the history UI register is empty", vim.log.levels.WARN)
+    return
+  end
+
+  local insertion
+  if first then
+    first, last = normalized_range(first, last)
+    if not first then
+      return
+    end
+    for _ = first, last do
+      table.remove(session.entries, first)
+    end
+    insertion = first
+  elseif #session.entries == 0 then
+    insertion = 1
+  else
+    local cursor = vim.api.nvim_win_get_cursor(0)[1]
+    insertion = after and cursor + 1 or cursor
+  end
+
+  local entries = pasted_entries(session, vim.v.count1)
+  for offset, entry in ipairs(entries) do
+    table.insert(session.entries, insertion + offset - 1, entry)
+  end
+  render_entries(session, insertion + #entries - 1)
 end
 
 local function install_buffer_maps(bufnr)
@@ -239,6 +331,55 @@ local function install_buffer_maps(bufnr)
     capture.ignore_next()
     replay_range(anchor, cursor)
   end, { buffer = bufnr, silent = true, nowait = true, desc = "Replay selected atoms" })
+  vim.keymap.set("n", "dd", function()
+    local cursor = vim.api.nvim_win_get_cursor(0)[1]
+    capture.ignore_next()
+    delete_range(cursor, math.min(#state.ui.entries, cursor + vim.v.count1 - 1))
+  end, { buffer = bufnr, silent = true, desc = "Cut atom entries" })
+  vim.keymap.set("x", "d", function()
+    local anchor = vim.fn.line("v")
+    local cursor = vim.api.nvim_win_get_cursor(0)[1]
+    capture.ignore_next()
+    delete_range(anchor, cursor)
+  end, { buffer = bufnr, silent = true, nowait = true, desc = "Cut selected atom entries" })
+  vim.keymap.set("x", "x", function()
+    local anchor = vim.fn.line("v")
+    local cursor = vim.api.nvim_win_get_cursor(0)[1]
+    capture.ignore_next()
+    delete_range(anchor, cursor)
+  end, { buffer = bufnr, silent = true, nowait = true, desc = "Cut selected atom entries" })
+  vim.keymap.set("n", "yy", function()
+    local cursor = vim.api.nvim_win_get_cursor(0)[1]
+    capture.ignore_next()
+    yank_range(cursor, math.min(#state.ui.entries, cursor + vim.v.count1 - 1))
+  end, { buffer = bufnr, silent = true, desc = "Yank atom entries" })
+  vim.keymap.set("x", "y", function()
+    local anchor = vim.fn.line("v")
+    local cursor = vim.api.nvim_win_get_cursor(0)[1]
+    capture.ignore_next()
+    yank_range(anchor, cursor)
+    vim.api.nvim_feedkeys(vim.keycode("<Esc>"), "nx", false)
+  end, { buffer = bufnr, silent = true, nowait = true, desc = "Yank selected atom entries" })
+  vim.keymap.set("n", "p", function()
+    capture.ignore_next()
+    paste(true)
+  end, { buffer = bufnr, silent = true, nowait = true, desc = "Paste atom entries after cursor" })
+  vim.keymap.set("n", "P", function()
+    capture.ignore_next()
+    paste(false)
+  end, { buffer = bufnr, silent = true, nowait = true, desc = "Paste atom entries before cursor" })
+  vim.keymap.set("x", "p", function()
+    local anchor = vim.fn.line("v")
+    local cursor = vim.api.nvim_win_get_cursor(0)[1]
+    capture.ignore_next()
+    paste(true, anchor, cursor)
+  end, { buffer = bufnr, silent = true, nowait = true, desc = "Replace selected atom entries" })
+  vim.keymap.set("x", "P", function()
+    local anchor = vim.fn.line("v")
+    local cursor = vim.api.nvim_win_get_cursor(0)[1]
+    capture.ignore_next()
+    paste(false, anchor, cursor)
+  end, { buffer = bufnr, silent = true, nowait = true, desc = "Replace selected atom entries" })
 end
 
 local function refresh(session)
@@ -261,6 +402,7 @@ function M.open()
   if state.ui then
     destroy(state.ui, false)
   end
+  require("atom-repeat.recipe_ui").close(false)
 
   local origin_win = vim.api.nvim_get_current_win()
   local origin_buf = vim.api.nvim_get_current_buf()

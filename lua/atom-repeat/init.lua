@@ -1,5 +1,8 @@
 local capture = require("atom-repeat.capture")
 local config = require("atom-repeat.config")
+local dot = require("atom-repeat.dot")
+local recipe_ui = require("atom-repeat.recipe_ui")
+local recipes = require("atom-repeat.recipes")
 local replay = require("atom-repeat.replay")
 local scope = require("atom-repeat.scope")
 local state = require("atom-repeat.state")
@@ -26,13 +29,21 @@ end
 local function replay_last(count)
   assert_initialized()
   local context = scope.resolve(vim.api.nvim_get_current_buf())
-  local group = store.get_last_group(context.id)
+  local group = store.get_last_group(context.id) or recipes.first(context.id)
   if not group then
     notify("no replay group for the current project and branch", vim.log.levels.WARN)
     return
   end
   replay.run(group.atoms, count or 1, function(ok, replay_error)
-    if not ok then
+    if ok then
+      if group.id then
+        recipes.touch(context.id, group.id)
+      else
+        local saved = recipes.add(context, group)
+        store.set_last_group(context.id, saved)
+      end
+      dot.set("<Plug>(AtomReplayLast)", { count = count or 1 })
+    elseif not ok then
       notify("replay stopped: " .. tostring(replay_error), vim.log.levels.ERROR)
     end
   end)
@@ -52,6 +63,9 @@ local function install_interfaces()
   replace_command("AtomReplayLast", function()
     M.replay_last()
   end, { desc = "Replay the last atom group" })
+  replace_command("AtomReplaySelect", function()
+    M.select()
+  end, { desc = "Select a saved atom replay recipe" })
   replace_command("AtomHistoryClear", function(command)
     owned_action(function()
       if command.bang then
@@ -68,6 +82,29 @@ local function install_interfaces()
       notify("cleared history for the current project and branch")
     end)
   end, { bang = true, desc = "Clear CmdAtom history" })
+  replace_command("AtomReplayClear", function(command)
+    owned_action(function()
+      if command.bang then
+        recipes.clear_all()
+        recipe_ui.close(true)
+        notify("cleared all saved replay recipes")
+        return
+      end
+      local bucket_id
+      if state.recipe_ui then
+        bucket_id = state.recipe_ui.bucket_id
+      elseif state.ui then
+        bucket_id = state.ui.bucket_id
+      else
+        bucket_id = scope.resolve(vim.api.nvim_get_current_buf()).id
+      end
+      recipes.clear(bucket_id)
+      if state.recipe_ui and state.recipe_ui.bucket_id == bucket_id then
+        recipe_ui.close(true)
+      end
+      notify("cleared saved replay recipes for the current project and branch")
+    end)
+  end, { bang = true, desc = "Clear saved atom replay recipes" })
 
   vim.keymap.set("n", "<Plug>(AtomReplayLast)", function()
     owned_action(function()
@@ -82,11 +119,14 @@ function M.setup(opts)
     error("atom-repeat: this Neovim build does not provide the CmdAtom event", 2)
   end
   state.config = config.resolve(opts)
+  recipes.setup()
   store.apply_limits()
   capture.setup()
   install_interfaces()
+  dot.setup()
   state.initialized = true
   ui.resize()
+  recipe_ui.resize()
 end
 
 function M.open()
@@ -99,6 +139,40 @@ function M.replay_last()
   assert_initialized()
   capture.ignore_next()
   replay_last(1)
+end
+
+function M.select()
+  assert_initialized()
+  capture.ignore_next()
+  local context
+  if state.recipe_ui then
+    context = {
+      id = state.recipe_ui.bucket_id,
+      project = state.recipe_ui.project,
+      branch = state.recipe_ui.branch,
+    }
+  elseif state.ui then
+    context = {
+      id = state.ui.bucket_id,
+      project = state.ui.project,
+      branch = state.ui.branch,
+    }
+  else
+    context = scope.resolve(vim.api.nvim_get_current_buf())
+  end
+  recipe_ui.open(context)
+end
+
+---Register another plugin's <Plug> mapping as the current dot-repeat action.
+---@param sequence string
+---@param opts? AtomRepeatDotOptions|integer
+---@return boolean
+function M.set_repeat(sequence, opts)
+  return dot.set(sequence, opts)
+end
+
+function M.invalidate_repeat()
+  dot.invalidate()
 end
 
 return M

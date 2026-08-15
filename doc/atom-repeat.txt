@@ -7,9 +7,10 @@ CONTENTS                                                     *atom-repeat*
 2. Setup........................................|atom-repeat-setup|
 3. History UI...................................|atom-repeat-history|
 4. Repeat.......................................|atom-repeat-repeat|
-5. Commands.....................................|atom-repeat-commands|
-6. Replay semantics.............................|atom-repeat-semantics|
-7. Limitations..................................|atom-repeat-limitations|
+5. Recipe library...............................|atom-repeat-recipes|
+6. Commands.....................................|atom-repeat-commands|
+7. Replay semantics.............................|atom-repeat-semantics|
+8. Limitations..................................|atom-repeat-limitations|
 
 ==============================================================================
 1. INTRODUCTION                                   *atom-repeat-introduction*
@@ -33,6 +34,12 @@ Setup is required and starts history capture: >lua
       history_size = 500,
       max_buckets = 20,
       max_consecutive_motions = 3,
+      recipes = {
+        max_items = 20,
+        persist = true,
+        -- path = vim.fs.joinpath(vim.fn.stdpath("state"),
+        --   "atom-repeat", "recipes.mpack"),
+      },
       ui = {
         height = 12,
       },
@@ -42,8 +49,12 @@ Setup is required and starts history capture: >lua
 `max_buckets` is the least-recently-used bucket limit.
 `max_consecutive_motions` retains only the first N Atoms in a consecutive run
 of h, j, k, l, w, or b. Use false for unlimited capture or 0 to omit them. A
-different Atom resets the run, and a counted command such as 3j is one Atom.
+single-key callback mapping on one of those LHS keys also counts as navigation.
+A different Atom resets the run, and a counted command such as 3j is one Atom.
 `ui.height` is the bottom history split height.
+`recipes.max_items` is the saved-recipe limit for each project/branch.
+`recipes.persist` enables MessagePack persistence. `recipes.path` defaults to
+`stdpath("state")/atom-repeat/recipes.mpack`.
 
 Capacity and height values must be positive integers. The motion limit is a
 non-negative integer or false. Unknown options are errors. Calling setup again
@@ -53,6 +64,7 @@ The public Lua functions are: >lua
 
     require("atom-repeat").open()
     require("atom-repeat").replay_last()
+    require("atom-repeat").select()
 <
 Both require setup to have run first.
 
@@ -76,7 +88,17 @@ History buffer mappings:
     <CR>    Replay the current row.
     V       Start native Visual-line selection.
     <CR>    In any Visual mode, replay every included row chronologically.
+    dd      Cut the current row (accepts a count).
+    d, x    In Visual mode, cut the selected rows.
+    yy      Copy the current row (accepts a count).
+    y       In Visual mode, copy the selected rows.
+    p, P    Paste after or before the cursor (accepts a count).
     q       Close and return to the origin window without replaying.
+
+Cut and copy use a history-UI-local register and never modify Vim registers.
+These edits change only the open replay recipe, not stored chronological
+history. Visual p/P replaces the selected rows while preserving that register.
+Close with q to discard the recipe; <CR> replays its displayed order.
 
 Running :AtomHistory again while the history buffer is current refreshes the
 snapshot. Only one history UI can exist in the editor. Opening it from another
@@ -97,10 +119,54 @@ Plug target: >lua
 <
 The Plug mapping honors |v:count1|. :AtomReplayLast always runs once.
 
-atom-repeat never maps or replaces native |.|.
+After a replay succeeds, |.| repeats that replay. A supplied count replaces the
+stored count. After another buffer change, |.| falls back to Neovim's native
+dot command. If normal-mode `.` is already mapped, atom-repeat does not replace
+it and its dot backend is disabled.
+
+Other plugins may register their own repeatable <Plug> mappings after making a
+change: >lua
+
+    require("atom-repeat").set_repeat("<Plug>(MyAction)", {
+      count = vim.v.count,
+      register = vim.v.register, -- optional
+    })
+<
+The registration is associated with the current buffer and |b:changedtick|.
+`set_repeat()` returns false if the dot backend is unavailable.
+`invalidate_repeat()` clears the current plugin registration.
+This repeat-only API initializes lazily and does not require CmdAtom setup.
+The standalone module API is `require("atom-repeat.dot").setup()` and `.set()`.
+If vim-repeat already owns `.`, its `repeat#set()` backend is reused. Other
+existing dot mappings are preserved.
 
 ==============================================================================
-5. COMMANDS                                               *atom-repeat-commands*
+5. RECIPE LIBRARY                                        *atom-repeat-recipes*
+
+Every successful replay from |:AtomHistory| is saved in a project/branch MRU
+library. Identical recipes are moved to the front instead of duplicated. The
+library retains `recipes.max_items` recipes per bucket.
+
+Use |:AtomReplaySelect| to open the current bucket. Rows show a persistent ID,
+creation time, Atom count, and a preview. Selector mappings:
+
+    <CR>    Replay the current recipe at the selector's origin cursor.
+    dd      Delete recipes (accepts a count).
+    d       In Visual mode, delete selected recipes.
+    yy      Copy recipes (accepts a count).
+    y       In Visual mode, copy selected recipes.
+    p, P    Paste after or before the cursor (accepts a count).
+    q       Close the selector.
+
+Selector cut/copy uses a dedicated register and does not touch Vim registers.
+Unlike history recipe edits, selector edits change the saved library and are
+persisted immediately. Pasted copies receive new recipe IDs.
+
+Persistence uses binary-safe MessagePack and an atomic temporary-file rename.
+It is enabled by default. Disable it with `recipes.persist = false`.
+
+==============================================================================
+6. COMMANDS                                               *atom-repeat-commands*
 
                                                         *:AtomHistory*
 :AtomHistory           Open or refresh the current history snapshot.
@@ -108,13 +174,21 @@ atom-repeat never maps or replaces native |.|.
                                                       *:AtomReplayLast*
 :AtomReplayLast        Replay the current bucket's last group once.
 
+                                                    *:AtomReplaySelect*
+:AtomReplaySelect      Open the current bucket's saved recipe selector.
+
+                                                     *:AtomReplayClear*
+:AtomReplayClear       Delete saved recipes for the current bucket.
+:AtomReplayClear!      Delete every saved recipe.
+
                                                     *:AtomHistoryClear*
-:AtomHistoryClear      Clear the current bucket and its last ReplayGroup.
-:AtomHistoryClear!     Clear all buckets and ReplayGroups. Session sequence
-                      numbers are not reset or reused.
+:AtomHistoryClear      Clear the current in-memory history bucket.
+:AtomHistoryClear!     Clear all in-memory history buckets. Persistent saved
+                      recipes are unaffected. Session sequence numbers are not
+                      reset or reused.
 
 ==============================================================================
-6. REPLAY SEMANTICS                                     *atom-repeat-semantics*
+7. REPLAY SEMANTICS                                     *atom-repeat-semantics*
 
 Every top-level CmdAtom is stored as one row. Nested composite `atoms` and all
 other structured fields are deep-copied without flattening or payload limits.
@@ -146,20 +220,21 @@ Git history is partitioned by worktree root and branch. Detached HEADs use the
 commit ID. Non-Git buffers use the global current working directory and a
 `nongit` label. The worktree HEAD is read for each captured Atom.
 
-History exists only in memory. Each bucket retains `history_size` entries, and
-the least-recently-used bucket is removed when `max_buckets` is exceeded.
+Raw Atom history exists only in memory. Each bucket retains `history_size`
+entries, and the least-recently-used bucket is removed when `max_buckets` is
+exceeded. Saved replay recipes are maintained separately and may persist.
 
 ==============================================================================
-7. LIMITATIONS                                         *atom-repeat-limitations*
+8. LIMITATIONS                                         *atom-repeat-limitations*
 
 - Lua callback and <Cmd> mapping side effects can only be repeated through the
   mapping's current LHS. Deterministic replay is not guaranteed.
 - Explicitly selected Ex Atoms are replayed without an extra confirmation.
 - Individual Atom payloads have no byte limit.
-- Native dot-repeat registration is not exposed by the current public Neovim
-  API. Use |:AtomReplayLast| or `<Plug>(AtomReplayLast)`.
-- There is no persistence, bucket browser, picker integration, named groups,
-  macro export, or existing-Visual-selection substitution in the MVP.
+- Native redo registration is not exposed by the current public Neovim API.
+  atom-repeat therefore uses a vim-repeat-style dispatcher around |.|.
+- There is no cross-bucket browser, picker integration, named recipes, macro
+  export, or existing-Visual-selection substitution.
 
 ==============================================================================
 vim:tw=78:ts=8:noet:ft=help:norl:

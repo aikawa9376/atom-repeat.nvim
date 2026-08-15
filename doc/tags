@@ -1,0 +1,15 @@
+:AtomHistory	atom-repeat.txt	/*:AtomHistory*
+:AtomHistoryClear	atom-repeat.txt	/*:AtomHistoryClear*
+:AtomReplayClear	atom-repeat.txt	/*:AtomReplayClear*
+:AtomReplayLast	atom-repeat.txt	/*:AtomReplayLast*
+:AtomReplaySelect	atom-repeat.txt	/*:AtomReplaySelect*
+atom-repeat	atom-repeat.txt	/*atom-repeat*
+atom-repeat-commands	atom-repeat.txt	/*atom-repeat-commands*
+atom-repeat-history	atom-repeat.txt	/*atom-repeat-history*
+atom-repeat-introduction	atom-repeat.txt	/*atom-repeat-introduction*
+atom-repeat-limitations	atom-repeat.txt	/*atom-repeat-limitations*
+atom-repeat-recipes	atom-repeat.txt	/*atom-repeat-recipes*
+atom-repeat-repeat	atom-repeat.txt	/*atom-repeat-repeat*
+atom-repeat-semantics	atom-repeat.txt	/*atom-repeat-semantics*
+atom-repeat-setup	atom-repeat.txt	/*atom-repeat-setup*
+atom-repeat.txt	atom-repeat.txt	/*atom-repeat.txt*

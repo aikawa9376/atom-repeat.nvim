@@ -3,10 +3,16 @@ local M = {}
 ---@class AtomRepeatUIConfig
 ---@field height integer
 
+---@class AtomRepeatRecipeConfig
+---@field max_items integer
+---@field persist boolean
+---@field path string
+
 ---@class AtomRepeatConfig
 ---@field history_size integer
 ---@field max_buckets integer
 ---@field max_consecutive_motions integer|false
+---@field recipes AtomRepeatRecipeConfig
 ---@field ui AtomRepeatUIConfig
 
 ---@type AtomRepeatConfig
@@ -14,6 +20,11 @@ local defaults = {
   history_size = 500,
   max_buckets = 20,
   max_consecutive_motions = 3,
+  recipes = {
+    max_items = 20,
+    persist = true,
+    path = vim.fs.joinpath(vim.fn.stdpath("state"), "atom-repeat", "recipes.mpack"),
+  },
   ui = {
     height = 12,
   },
@@ -60,8 +71,15 @@ function M.resolve(opts)
     history_size = true,
     max_buckets = true,
     max_consecutive_motions = true,
+    recipes = true,
     ui = true,
   }, "opts")
+  if opts.recipes ~= nil then
+    if type(opts.recipes) ~= "table" then
+      fail("opts.recipes", "expected a table")
+    end
+    validate_keys(opts.recipes, { max_items = true, persist = true, path = true }, "opts.recipes")
+  end
   if opts.ui ~= nil then
     if type(opts.ui) ~= "table" then
       fail("opts.ui", "expected a table")
@@ -73,6 +91,13 @@ function M.resolve(opts)
   positive_integer(config.history_size, "opts.history_size")
   positive_integer(config.max_buckets, "opts.max_buckets")
   motion_limit(config.max_consecutive_motions)
+  positive_integer(config.recipes.max_items, "opts.recipes.max_items")
+  if type(config.recipes.persist) ~= "boolean" then
+    fail("opts.recipes.persist", "expected a boolean")
+  end
+  if type(config.recipes.path) ~= "string" or config.recipes.path == "" then
+    fail("opts.recipes.path", "expected a non-empty string")
+  end
   positive_integer(config.ui.height, "opts.ui.height")
   return config
 end

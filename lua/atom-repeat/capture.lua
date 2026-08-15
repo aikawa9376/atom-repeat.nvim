@@ -48,8 +48,15 @@ function M.set_replaying(value)
   end
 end
 
+local function limited_motion(atom)
+  if atom.type == "motion" then
+    return limited_motions[atom.cmd] or limited_motions[atom.lhs]
+  end
+  return atom.type == "mapping" and atom.keys == "" and limited_motions[atom.lhs]
+end
+
 local function should_store(atom, context)
-  if atom.type ~= "motion" or not limited_motions[atom.cmd] then
+  if not limited_motion(atom) then
     reset_motion_run()
     return true
   end
