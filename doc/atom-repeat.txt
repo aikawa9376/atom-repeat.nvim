@@ -1,0 +1,160 @@
+*atom-repeat.txt*          Retrospective macros from CmdAtom history
+
+==============================================================================
+CONTENTS                                                     *atom-repeat*
+
+1. Introduction.................................|atom-repeat-introduction|
+2. Setup........................................|atom-repeat-setup|
+3. History UI...................................|atom-repeat-history|
+4. Repeat.......................................|atom-repeat-repeat|
+5. Commands.....................................|atom-repeat-commands|
+6. Replay semantics.............................|atom-repeat-semantics|
+7. Limitations..................................|atom-repeat-limitations|
+
+==============================================================================
+1. INTRODUCTION                                   *atom-repeat-introduction*
+
+atom-repeat.nvim records top-level |CmdAtom| events after setup and presents
+them as retrospective macros. Recording does not need to be started before an
+edit. A history range can be selected after the edit and replayed at another
+cursor position.
+
+REQUIREMENTS ~
+
+atom-repeat requires a Neovim build with the CmdAtom event. It has no runtime
+dependencies and does not emulate CmdAtom on older Neovim versions.
+
+==============================================================================
+2. SETUP                                                   *atom-repeat-setup*
+
+Setup is required and starts history capture: >lua
+
+    require("atom-repeat").setup({
+      history_size = 500,
+      max_buckets = 20,
+      ui = {
+        height = 12,
+      },
+    })
+<
+`history_size` is the entry limit for each project/branch bucket.
+`max_buckets` is the least-recently-used bucket limit.
+`ui.height` is the bottom history split height.
+
+All values must be positive integers. Unknown options are errors. Calling
+setup again preserves history and reapplies the configured limits.
+
+The public Lua functions are: >lua
+
+    require("atom-repeat").open()
+    require("atom-repeat").replay_last()
+<
+Both require setup to have run first.
+
+Capture begins when setup is called. Lazy-loading is supported, but actions
+that occurred before setup cannot be recovered.
+
+==============================================================================
+3. HISTORY UI                                           *atom-repeat-history*
+
+Run |:AtomHistory| after placing the cursor where replay should start. A
+12-line `botright` horizontal split opens by default. Rows are ordered oldest
+to newest and contain:
+
+    sequence  type  action  buffer
+
+The initial cursor is on the newest entry. The window bar shows the project
+and branch for the snapshot.
+
+History buffer mappings:
+
+    <CR>    Replay the current row.
+    V       Start native Visual-line selection.
+    <CR>    In any Visual mode, replay every included row chronologically.
+    q       Close and return to the origin window without replaying.
+
+Running :AtomHistory again while the history buffer is current refreshes the
+snapshot. Only one history UI can exist in the editor. Opening it from another
+tab closes the old instance. An empty bucket produces a notification without
+opening a split.
+
+The origin cursor is tracked by an extmark. Replay is rejected while keeping
+the UI open if the origin window, buffer, project, or branch changed.
+
+==============================================================================
+4. REPEAT                                                 *atom-repeat-repeat*
+
+The most recently successful ReplayGroup is stored separately for every
+project/branch bucket. Repeat it once with |:AtomReplayLast| or map the provided
+Plug target: >lua
+
+    vim.keymap.set("n", "g.", "<Plug>(AtomReplayLast)")
+<
+The Plug mapping honors |v:count1|. :AtomReplayLast always runs once.
+
+atom-repeat never maps or replaces native |.|.
+
+==============================================================================
+5. COMMANDS                                               *atom-repeat-commands*
+
+                                                        *:AtomHistory*
+:AtomHistory           Open or refresh the current history snapshot.
+
+                                                      *:AtomReplayLast*
+:AtomReplayLast        Replay the current bucket's last group once.
+
+                                                    *:AtomHistoryClear*
+:AtomHistoryClear      Clear the current bucket and its last ReplayGroup.
+:AtomHistoryClear!     Clear all buckets and ReplayGroups. Session sequence
+                      numbers are not reset or reused.
+
+==============================================================================
+6. REPLAY SEMANTICS                                     *atom-repeat-semantics*
+
+Every top-level CmdAtom is stored as one row. Nested composite `atoms` and all
+other structured fields are deep-copied without flattening or payload limits.
+
+Replay chooses one of these strategies:
+
+1. A non-empty `keys` field is sent to |nvim_feedkeys()| without remapping.
+2. Otherwise a non-empty `lhs` field is sent with mappings enabled.
+3. An Atom with neither field is unsupported.
+
+The whole range is validated before replay. An unsupported entry prevents all
+execution. A runtime error stops the remaining queue, but changes made by
+earlier entries are not rolled back.
+
+LHS replay uses the mapping active at replay time. A changed callback therefore
+runs the new callback. A removed mapping causes the LHS to be interpreted as
+ordinary input in the current mode.
+
+Initial history replay starts in Normal mode at the cursor snapshot. Stored
+Visual Atom keys recreate their own selection. An existing Visual selection is
+not substituted. Repeating a saved group starts at the current cursor.
+
+Undo boundaries are determined by the individual native actions. The plugin
+does not join a group into one undo block.
+
+BUCKETS ~
+
+Git history is partitioned by worktree root and branch. Detached HEADs use the
+commit ID. Non-Git buffers use the global current working directory and a
+`nongit` label. The worktree HEAD is read for each captured Atom.
+
+History exists only in memory. Each bucket retains `history_size` entries, and
+the least-recently-used bucket is removed when `max_buckets` is exceeded.
+
+==============================================================================
+7. LIMITATIONS                                         *atom-repeat-limitations*
+
+- Lua callback and <Cmd> mapping side effects can only be repeated through the
+  mapping's current LHS. Deterministic replay is not guaranteed.
+- Explicitly selected Ex Atoms are replayed without an extra confirmation.
+- Individual Atom payloads have no byte limit.
+- Native dot-repeat registration is not exposed by the current public Neovim
+  API. Use |:AtomReplayLast| or `<Plug>(AtomReplayLast)`.
+- There is no persistence, bucket browser, picker integration, named groups,
+  macro export, or existing-Visual-selection substitution in the MVP.
+
+==============================================================================
+vim:tw=78:ts=8:noet:ft=help:norl:
