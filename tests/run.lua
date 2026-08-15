@@ -65,6 +65,7 @@ local function reset_history()
   store.clear_all()
   state.suppress_tokens = {}
   state.replaying = false
+  state.motion_run = { bucket_id = nil, count = 0 }
 end
 
 local function fresh_buffer(lines)
@@ -87,6 +88,10 @@ test("configuration is strict and setup is idempotent", function()
   truthy(not ok and tostring(err):find("positive integer", 1, true), "invalid capacity should fail")
   ok, err = pcall(atom_repeat.setup, { unknown = true })
   truthy(not ok and tostring(err):find("unknown option", 1, true), "unknown keys should fail")
+  ok, err = pcall(atom_repeat.setup, { max_consecutive_motions = -1 })
+  truthy(not ok and tostring(err):find("non%-negative"), "negative motion limits should fail")
+  atom_repeat.setup({ max_consecutive_motions = 0 })
+  atom_repeat.setup({ max_consecutive_motions = false })
 
   reset_history()
   state.config = require("atom-repeat.config").resolve({ history_size = 5, max_buckets = 2 })
@@ -166,6 +171,86 @@ test("CmdAtom capture preserves structured mappings", function()
   eq(2, #entry.atom.atoms, "nested atoms")
   eq("keys", entry.replay_kind, "keys strategy wins when available")
   vim.keymap.del("n", "Q")
+end)
+
+test("simple navigation runs retain only the configured prefix", function()
+  reset_history()
+  atom_repeat.setup({ max_consecutive_motions = 3 })
+  local lines = {}
+  for index = 1, 9 do
+    lines[index] = "alpha beta gamma"
+  end
+  fresh_buffer(lines)
+  vim.api.nvim_win_set_cursor(0, { 5, 6 })
+  for _, key in ipairs({ "h", "j", "k", "l", "w", "b" }) do
+    vim.api.nvim_input(key)
+    sleep(20)
+  end
+  local bucket = current_bucket()
+  eq(3, #bucket.entries, "only the first three navigation atoms should remain")
+  eq({ "h", "j", "k" }, vim.tbl_map(function(entry)
+    return entry.atom.cmd
+  end, bucket.entries), "the retained navigation prefix")
+
+  vim.api.nvim_input("x")
+  sleep(20)
+  vim.api.nvim_input("h")
+  wait_for(function()
+    return #current_bucket().entries == 5
+  end, "a non-navigation atom should reset the run")
+  eq("h", current_bucket().entries[5].atom.cmd, "motion after reset")
+
+  reset_history()
+  atom_repeat.setup({ max_consecutive_motions = false })
+  fresh_buffer(lines)
+  vim.api.nvim_win_set_cursor(0, { 5, 6 })
+  for _, key in ipairs({ "h", "j", "k", "l" }) do
+    vim.api.nvim_input(key)
+    sleep(20)
+  end
+  eq(4, #current_bucket().entries, "false should disable the motion limit")
+  atom_repeat.setup()
+end)
+
+test("search commands and search repeats are captured as separate atoms", function()
+  reset_history()
+  fresh_buffer({ "alpha beta alpha" })
+  vim.api.nvim_input("/beta\r")
+  wait_for(function()
+    local bucket = current_bucket()
+    return bucket and #bucket.entries == 1
+  end, "slash search atom was not captured")
+  local search = current_bucket().entries[1].atom
+  eq("motion", search.type, "slash search type")
+  eq("/", search.cmd, "slash search command")
+  eq("beta", search.text, "slash search text")
+
+  vim.api.nvim_input("n")
+  wait_for(function()
+    return #current_bucket().entries == 2
+  end, "search repeat atom was not captured")
+  eq("n", current_bucket().entries[2].atom.cmd, "search repeat command")
+end)
+
+test("history columns use display width and receive highlights", function()
+  reset_history()
+  local context = scope.resolve(fresh_buffer({ "x" }))
+  context.buffer_display = "project/file.lua"
+  store.add({ type = "mapping", keys = "", lhs = "j" }, context)
+  store.add({ type = "insert", keys = "itest\027", text = "testdesu" }, context)
+  atom_repeat.open()
+  local lines = vim.api.nvim_buf_get_lines(state.ui.buf, 0, -1, false)
+  local columns = {}
+  for index, line in ipairs(lines) do
+    local byte_start = assert(line:find("project/file.lua", 1, true))
+    columns[index] = vim.fn.strdisplaywidth(line:sub(1, byte_start - 1))
+  end
+  eq(columns[1], columns[2], "buffer column should align across multibyte actions")
+  local namespace = vim.api.nvim_get_namespaces()["atom-repeat-highlights"]
+  truthy(namespace ~= nil, "highlight namespace should exist")
+  local marks = vim.api.nvim_buf_get_extmarks(state.ui.buf, namespace, 0, -1, {})
+  truthy(#marks >= 8, "each visible column should be highlighted")
+  require("atom-repeat.ui").close(false)
 end)
 
 test("history UI replays keys at the origin and does not capture itself", function()

@@ -7,6 +7,7 @@ local store = require("atom-repeat.store")
 local M = {}
 
 local mark_namespace = vim.api.nvim_create_namespace("atom-repeat-origin")
+local highlight_namespace = vim.api.nvim_create_namespace("atom-repeat-highlights")
 local ui_group = vim.api.nvim_create_augroup("AtomRepeatUI", { clear = false })
 local generation = 0
 
@@ -36,6 +37,11 @@ local function truncate(value, width)
   return result .. "…"
 end
 
+local function pad(value, width)
+  value = truncate(value, width)
+  return value .. string.rep(" ", math.max(0, width - vim.fn.strdisplaywidth(value)))
+end
+
 local function action(entry)
   local atom = entry.atom
   if atom.lhs then
@@ -58,13 +64,34 @@ local function action(entry)
   return "<unsupported>"
 end
 
+local type_highlights = {
+  command = "Statement",
+  ex = "Statement",
+  insert = "String",
+  jump = "Identifier",
+  mapping = "Special",
+  motion = "Function",
+  mouse = "Comment",
+  operator = "Operator",
+  scroll = "Comment",
+  visual = "Type",
+}
+
 local function format_entry(entry)
-  return ("%6d  %-10s %-48s %s"):format(
-    entry.seq,
-    truncate(entry.atom.type or "unknown", 10),
-    truncate(action(entry), 48),
-    entry.context.buffer_display
-  )
+  local sequence = ("%6d"):format(entry.seq)
+  local atom_type = pad(entry.atom.type or "unknown", 10)
+  local atom_action = pad(action(entry), 48)
+  local buffer = entry.context.buffer_display
+  local line = sequence .. "  " .. atom_type .. " " .. atom_action .. " " .. buffer
+  local type_start = #sequence + 2
+  local action_start = type_start + #atom_type + 1
+  local buffer_start = action_start + #atom_action + 1
+  return line, {
+    { 0, #sequence, "LineNr" },
+    { type_start, type_start + #(entry.atom.type or "unknown"), type_highlights[entry.atom.type] or "Type" },
+    { action_start, action_start + #truncate(action(entry), 48), entry.atom.type == "insert" and "String" or "Normal" },
+    { buffer_start, #line, "Comment" },
+  }
 end
 
 local function delete_origin_mark(session)
@@ -101,12 +128,25 @@ local function render(session, snapshot)
   session.entries = snapshot.entries
 
   local lines = {}
+  local highlights = {}
   for index, entry in ipairs(snapshot.entries) do
-    lines[index] = format_entry(entry)
+    lines[index], highlights[index] = format_entry(entry)
   end
   vim.bo[session.buf].modifiable = true
   vim.api.nvim_buf_set_lines(session.buf, 0, -1, false, lines)
   vim.bo[session.buf].modifiable = false
+  vim.api.nvim_buf_clear_namespace(session.buf, highlight_namespace, 0, -1)
+  for row, spans in ipairs(highlights) do
+    for _, span in ipairs(spans) do
+      if span[2] > span[1] then
+        vim.api.nvim_buf_set_extmark(session.buf, highlight_namespace, row - 1, span[1], {
+          end_col = span[2],
+          hl_group = span[3],
+          hl_mode = "combine",
+        })
+      end
+    end
+  end
   vim.wo[session.win].winbar = (" atom-repeat: %s [%s] "):format(snapshot.project, snapshot.branch):gsub("%%", "%%%%")
   if #lines > 0 then
     vim.api.nvim_win_set_cursor(session.win, { #lines, 0 })

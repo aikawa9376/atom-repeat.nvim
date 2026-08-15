@@ -70,15 +70,22 @@ three times. `:AtomReplayLast` always replays it once.
 require("atom-repeat").setup({
   history_size = 500, -- entries retained per project/branch bucket
   max_buckets = 20,  -- least-recently-used bucket limit
+  -- Keep the first 3 atoms in a consecutive h/j/k/l/w/b run.
+  -- Use false for unlimited history, or 0 to omit these motions.
+  max_consecutive_motions = 3,
   ui = {
     height = 12,     -- bottom split height
   },
 })
 ```
 
-Unknown options and non-positive integer values are errors. Calling `setup()`
-again preserves history, replaces plugin-owned interfaces without duplication,
-and immediately applies smaller capacity limits.
+Unknown options and invalid values are errors. Capacity and height must be
+positive integers; the motion limit is a non-negative integer or `false`.
+Calling `setup()` again preserves history, replaces plugin-owned interfaces
+without duplication, and immediately applies smaller capacity limits.
+
+`h`, `j`, `k`, `l`, `w`, and `b` share one consecutive-motion run. A different
+Atom resets the run. Counts belong to one Atom, so `3j` consumes one slot.
 
 Commands:
 

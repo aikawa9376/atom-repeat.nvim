@@ -32,6 +32,7 @@ Setup is required and starts history capture: >lua
     require("atom-repeat").setup({
       history_size = 500,
       max_buckets = 20,
+      max_consecutive_motions = 3,
       ui = {
         height = 12,
       },
@@ -39,10 +40,14 @@ Setup is required and starts history capture: >lua
 <
 `history_size` is the entry limit for each project/branch bucket.
 `max_buckets` is the least-recently-used bucket limit.
+`max_consecutive_motions` retains only the first N Atoms in a consecutive run
+of h, j, k, l, w, or b. Use false for unlimited capture or 0 to omit them. A
+different Atom resets the run, and a counted command such as 3j is one Atom.
 `ui.height` is the bottom history split height.
 
-All values must be positive integers. Unknown options are errors. Calling
-setup again preserves history and reapplies the configured limits.
+Capacity and height values must be positive integers. The motion limit is a
+non-negative integer or false. Unknown options are errors. Calling setup again
+preserves history and reapplies the configured limits.
 
 The public Lua functions are: >lua
 
