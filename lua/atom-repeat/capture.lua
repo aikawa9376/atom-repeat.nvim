@@ -56,10 +56,26 @@ local function should_store(atom, context)
   return limit == false or state.motion_run.count <= limit
 end
 
+local function record(atom, bufnr, keys, mapped)
+  if is_owned_buffer(bufnr) or not vim.api.nvim_buf_is_valid(bufnr) then
+    reset_motion_run()
+    return
+  end
+  local context = scope.resolve(bufnr)
+  if should_store(atom, context) then
+    local entry = store.add(atom, context, keys)
+    dot.observe(bufnr, entry, mapped)
+  end
+end
+
 function M.setup()
   reset_motion_run()
   vim.api.nvim_clear_autocmds({ group = group })
-  input.setup(group, state.config.capture_lua_prompts)
+  input.setup(group, state.config.capture_lua_prompts, function(atom, bufnr)
+    if state.replay_depth == 0 then
+      record(atom, bufnr, nil, true)
+    end
+  end)
   vim.api.nvim_create_autocmd("RecordingEnter", { group = group, callback = dot.start_recording })
   vim.api.nvim_create_autocmd("RecordingLeave", {
     group = group,
@@ -95,7 +111,7 @@ function M.setup()
 
       local atom, bufnr = event.data, event.buf
       local keys, mapped, ignored = input.take(atom, bufnr)
-      if ignored or is_owned_buffer(bufnr) or not vim.api.nvim_buf_is_valid(bufnr) then
+      if ignored then
         reset_motion_run()
         return
       end
@@ -104,11 +120,7 @@ function M.setup()
         and (atom.keys == "q" or (atom.cmdarg or ""):match('^[%w"]$')) then
         return
       end
-      local context = scope.resolve(bufnr)
-      if should_store(atom, context) then
-        local entry = store.add(atom, context, keys)
-        dot.observe(bufnr, entry, mapped)
-      end
+      record(atom, bufnr, keys, mapped)
     end,
   })
   vim.api.nvim_create_autocmd({ "BufFilePost", "BufDelete" }, {

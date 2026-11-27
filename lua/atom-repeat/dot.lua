@@ -169,7 +169,11 @@ function M.observe(bufnr, entry, mapped)
     end
     return
   end
-  if entry.replay_kind == "lhs" and (mapped or atom.keys == nil or atom.operator == "g@" or atom.type == "excmd") then
+  -- Operator-pending expression mappings can consume their text object
+  -- before on_key sees it. Re-enter the LHS when the motion ran an Ex command.
+  local mapped_operator = atom.operator and atom.cmd == ":" and atom.type == "operator"
+  if entry.replay_kind == "lhs"
+    and (mapped or mapped_operator or atom.keys == nil or atom.operator == "g@" or atom.type == "excmd") then
     automatic = {
       entry = entry,
       buf = bufnr,

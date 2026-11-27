@@ -1,6 +1,7 @@
 local capture = require("atom-repeat.capture")
 
 local dot = require("atom-repeat.dot")
+local input = require("atom-repeat.input")
 
 local M = {}
 local running = false
@@ -39,7 +40,11 @@ function M.flush()
   vim.schedule(function()
     flushed = true
   end)
-  return vim.wait(1000, function() return flushed end, 1)
+  local ok = vim.wait(1000, function() return flushed end, 1)
+  if ok then
+    input.flush()
+  end
+  return ok
 end
 
 function M.now(entries, count, callback)

@@ -154,8 +154,13 @@ function M.open()
   assert_initialized()
   capture.ignore_next()
   if input.pending() then
-    -- Include CmdAtoms emitted by input immediately before the command.
-    vim.schedule(ui.open)
+    vim.schedule(function()
+      -- Include native atoms and any recovered operator immediately before
+      -- the history command.
+      if replay.flush() then
+        ui.open()
+      end
+    end)
   else
     ui.open()
   end

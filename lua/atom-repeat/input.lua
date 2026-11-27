@@ -5,11 +5,17 @@ local chunks = {}
 local first = 1
 local prompt_chunk
 local wrapped_readers = {}
+local ignore_key = vim.keycode("<Ignore>")
+local pending_operator
+local completed_operators = {}
+local record_operator
 
 function M.reset()
   chunks = {}
   first = 1
   prompt_chunk = nil
+  pending_operator = nil
+  completed_operators = {}
 end
 
 -- getchar() bypasses on_key. For Lua Insert mappings associate a consumed
@@ -41,8 +47,65 @@ local function setup_readers(enabled)
   end
 end
 
-function M.setup(group, capture_lua_prompts)
+local function finish_operator()
+  local operator = pending_operator
+  if not operator then
+    return
+  end
+  pending_operator = nil
+  if vim.api.nvim_get_current_buf() ~= operator.buf then
+    return
+  end
+  local changed = operator.name ~= "y" and vim.b.changedtick ~= operator.tick
+  if changed or operator.yanked then
+    operator.last = #chunks
+    operator.changed = changed
+    operator.undoseq = vim.fn.undotree().seq_cur
+    completed_operators[#completed_operators + 1] = operator
+  end
+end
+
+local function watch_operator(chunk)
+  -- Expressions such as lazy.nvim's first-use mappings can requeue an
+  -- operator's text object without marking the requeued keys as typed.
+  if chunk.key ~= ignore_key or not vim.startswith(chunk.mode, "no") then
+    return
+  end
+  local operator = vim.v.operator
+  if not (operator == "c" or operator == "d" or operator == "y") then
+    return
+  end
+  local function earlier(index, mode)
+    local key = index >= first and chunks[index]
+    return key and key.buf == chunk.buf and key.mode == mode and key.typed or ""
+  end
+  local function include_count(start, mode)
+    for index = start - 1, first, -1 do
+      local key = earlier(index, mode)
+      if not key:match("^%d$") then
+        break
+      end
+      if key ~= "0" then
+        start = index
+      end
+    end
+    return start
+  end
+  local motion = include_count(#chunks, chunk.mode)
+  if earlier(motion - 1, "n") ~= operator then
+    return
+  end
+  local start = include_count(motion - 1, "n")
+  local _, register = M.prefix(earlier(start - 2, "n") .. earlier(start - 1, "n"))
+  if register then
+    start = include_count(start - 2, "n")
+  end
+  pending_operator = { start = start, buf = chunk.buf, name = operator, tick = vim.b.changedtick }
+end
+
+function M.setup(group, capture_lua_prompts, on_missing_operator)
   M.reset()
+  record_operator = on_missing_operator
   setup_readers(capture_lua_prompts)
   vim.on_key(function(key, typed)
     prompt_chunk = nil
@@ -54,12 +117,24 @@ function M.setup(group, capture_lua_prompts)
         mode = vim.api.nvim_get_mode().mode,
         mapped = key ~= typed,
       }
+      if chunk.mode == "n" then
+        finish_operator()
+      end
       chunks[#chunks + 1] = chunk
+      watch_operator(chunk)
       if capture_lua_prompts and chunk.mapped and chunk.mode:match("^[iR]") then
         prompt_chunk = chunk
       end
     end
   end, namespace)
+  vim.api.nvim_create_autocmd("TextYankPost", {
+    group = group,
+    callback = function(event)
+      if pending_operator and pending_operator.buf == event.buf and vim.v.event.operator == "y" then
+        pending_operator.yanked = true
+      end
+    end,
+  })
   vim.api.nvim_create_autocmd("SafeState", {
     group = group,
     callback = function()
@@ -67,6 +142,7 @@ function M.setup(group, capture_lua_prompts)
       if first > #chunks or vim.api.nvim_get_mode().mode ~= "n" then
         return
       end
+      finish_operator()
       -- CmdAtom can be queued until after SafeState, e.g. with pasted typeahead.
       local batch, last = chunks, #chunks
       vim.schedule(function()
@@ -75,6 +151,7 @@ function M.setup(group, capture_lua_prompts)
           -- available to any CmdAtom handlers already scheduled.
           vim.schedule(function()
             if chunks == batch and #chunks == last then
+              M.flush()
               M.reset()
             end
           end)
@@ -113,7 +190,52 @@ function M.prefix(keys)
   return count, nil, rest
 end
 
-local function take(start, last, keys)
+local function typed_keys(start, last, prefix)
+  local keys = { prefix }
+  for i = start, last do
+    keys[#keys + 1] = chunks[i].typed .. (chunks[i].payload or "")
+  end
+  local raw = table.concat(keys)
+  -- on_key and getcharstr return literal UTF-8. A continuation byte 0x80
+  -- must be escaped when passed back to nvim_feedkeys alongside keycodes.
+  if raw:find("\128", 1, true) and raw:find("[\194-\244]") then
+    return vim.keycode(vim.fn.keytrans(raw))
+  end
+  return raw
+end
+
+local function flush_operators(before)
+  while completed_operators[1] and completed_operators[1].last < before do
+    local operator = table.remove(completed_operators, 1)
+    if operator.start >= first then
+      local keys = typed_keys(operator.start, operator.last, "")
+      first = operator.last + 1
+      record_operator({
+        type = "operator",
+        lhs = keys,
+        operator = operator.name,
+        changed = operator.changed,
+        undoseq = operator.undoseq,
+      }, operator.buf)
+    end
+  end
+end
+
+function M.flush()
+  flush_operators(math.huge)
+end
+
+local function take(start, last, keys, atom)
+  flush_operators(start)
+  local operator = completed_operators[1]
+  if operator and operator.start >= first and operator.start <= last and operator.last >= start
+    and atom.operator == operator.name and atom.undoseq == operator.undoseq then
+    -- The native atom can contain the loader's resolved motion. Keep the
+    -- native metadata and replace its input with the original mapping.
+    table.remove(completed_operators, 1)
+    keys = typed_keys(operator.start, operator.last, "")
+    start, last = operator.start, operator.last
+  end
   local mapped, ignored = false, false
   local repeated
   for i = start, last do
@@ -166,20 +288,6 @@ local function insert_end(start, bufnr)
   end
 end
 
-local function typed_keys(start, last, prefix)
-  local keys = { prefix }
-  for i = start, last do
-    keys[#keys + 1] = chunks[i].typed .. (chunks[i].payload or "")
-  end
-  local raw = table.concat(keys)
-  -- on_key and getcharstr return literal UTF-8. A continuation byte 0x80
-  -- must be escaped when passed back to nvim_feedkeys alongside keycodes.
-  if raw:find("\128", 1, true) and raw:find("[\194-\244]") then
-    return vim.keycode(vim.fn.keytrans(raw))
-  end
-  return raw
-end
-
 local function visual_end(start, bufnr)
   local last = start
   for i = start + 1, #chunks do
@@ -194,6 +302,9 @@ local function visual_end(start, bufnr)
 end
 
 function M.take(atom, bufnr)
+  if pending_operator and vim.api.nvim_get_mode().mode == "n" then
+    finish_operator()
+  end
   if not atom.lhs or atom.lhs == "" then
     return
   end
@@ -212,7 +323,7 @@ function M.take(atom, bufnr)
       if insert and remaining ~= "" then
         local last = insert_end(start, bufnr)
         if last and (body_length or chunk.mapped) then
-          return take(start, last, typed_keys(start, last, prefix))
+          return take(start, last, typed_keys(start, last, prefix), atom)
         end
       end
       if length or body_length then
@@ -233,14 +344,14 @@ function M.take(atom, bufnr)
         end
 
         if offset > #expected then
-          return take(start, matched, typed_keys(start, matched, prefix))
+          return take(start, matched, typed_keys(start, matched, prefix), atom)
         end
         -- Visual keys can be normalized (e.g. "~" becomes "g~"), or
         -- omitted when a motion didn't move at the original cursor.
         if atom.type == "visual" then
           local last = visual_end(matched, bufnr)
           if last > matched then
-            return take(start, last, typed_keys(start, last, prefix))
+            return take(start, last, typed_keys(start, last, prefix), atom)
           end
         end
         -- The suffix can be getchar() input, which only CmdAtom observes.
@@ -248,7 +359,7 @@ function M.take(atom, bufnr)
         -- match so stale keys from an aborted operation aren't used.
         if chunk.mapped or matched > start then
           local keys = prefix ~= "" and prefix .. body or expected
-          return take(start, matched, keys)
+          return take(start, matched, keys, atom)
         end
       end
       local candidate = prefix .. chunk.typed

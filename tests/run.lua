@@ -305,6 +305,31 @@ test("Insert replay preserves mapped opener, input and exit", function()
   vim.keymap.del("i", "jj")
 end)
 
+test("a first-use operator mapping requeued by a loader is recorded in input order", function()
+  reset_history()
+  local buf = fresh_buffer({ "[one]", "[two]", "[three]" })
+  local opts = { buffer = buf }
+  vim.keymap.set("o", "ib", function()
+    vim.keymap.set("o", "ib", "i]", opts)
+    vim.api.nvim_feedkeys(vim.keycode("<Ignore>ib"), "i", false)
+  end, { buffer = buf, expr = true })
+
+  vim.api.nvim_input('"acibtest<Esc>j0:AtomReplayLast<CR>')
+  wait_for(function()
+    return vim.api.nvim_buf_get_lines(buf, 1, 2, false)[1] == "[test]"
+  end, "replay should find the first edit even when the loader requeued the motion")
+  local entries = current_bucket().entries
+  eq(vim.keycode('"acibtest<Esc>'), entries[1].replay_value)
+  eq("j", entries[2].replay_value, "later navigation should follow the recovered edit")
+  eq(3, #entries, "the recovered edit should be recorded once")
+  eq("two", vim.fn.getreg("a"), "the replay should preserve the explicit register")
+
+  vim.api.nvim_input("j0.")
+  wait_for(function()
+    return vim.api.nvim_buf_get_lines(buf, 2, 3, false)[1] == "[test]"
+  end)
+end)
+
 test("CmdAtom explicitly unreplayable entries cannot run their lhs", function()
   reset_history()
   fresh_buffer()
