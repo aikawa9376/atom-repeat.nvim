@@ -372,6 +372,50 @@ test("remapped change keeps the text object read by a Vimscript expression", fun
   vim.g.atom_repeat_test_object = nil
 end)
 
+test("remapped change preserves a Lua motion's prompt and mapped Insert exit", function()
+  reset_history()
+  local buf = fresh_buffer({ "one x tail", "two x tail" })
+  local opts = { buffer = buf }
+  vim.keymap.set("n", "c", "m`mvc", opts)
+  vim.keymap.set("i", "jj", "<Esc>", opts)
+  vim.keymap.set("o", "f", function()
+    local target = vim.fn.getcharstr()
+    vim.cmd.normal({ "vf" .. target, bang = true })
+  end, opts)
+
+  vim.api.nvim_input("cfxNEWjj")
+  wait_for(function() return current_bucket() and #current_bucket().entries == 1 end)
+  eq("cfxNEWjj", current_bucket().entries[1].replay_value)
+  vim.api.nvim_input("j0.")
+  wait_for(function() return vim.api.nvim_buf_get_lines(buf, 1, 2, false)[1] == "NEW tail" end)
+end)
+
+test("a lazy Normal-mode operator mapping keeps its original opener and payload", function()
+  reset_history()
+  local buf = fresh_buffer({ "one", "two" })
+  local prior_operatorfunc = vim.go.operatorfunc
+  _G.AtomRepeatTestOperator = function()
+    local char = vim.fn.getcharstr()
+    vim.api.nvim_set_current_line(vim.api.nvim_get_current_line() .. char)
+  end
+  vim.keymap.set("n", "<F12>", function()
+    vim.keymap.set("n", "<F12>", function()
+      vim.go.operatorfunc = "v:lua.AtomRepeatTestOperator"
+      return "g@"
+    end, { buffer = buf, expr = true })
+    vim.api.nvim_feedkeys(vim.keycode("<Ignore><F12>"), "i", false)
+  end, { buffer = buf, expr = true })
+
+  vim.api.nvim_input("<F12>iw!")
+  wait_for(function() return current_bucket() and #current_bucket().entries == 1 end)
+  eq(vim.keycode("<F12>iw!"), current_bucket().entries[1].replay_value)
+  vim.go.operatorfunc = ""
+  vim.api.nvim_input("j0:AtomReplayLast<CR>")
+  wait_for(function() return vim.api.nvim_get_current_line() == "two!" end)
+  vim.go.operatorfunc = prior_operatorfunc
+  _G.AtomRepeatTestOperator = nil
+end)
+
 test("CmdAtom explicitly unreplayable entries cannot run their lhs", function()
   reset_history()
   fresh_buffer()

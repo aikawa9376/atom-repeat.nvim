@@ -305,26 +305,42 @@ local function insert_end(start, bufnr)
   end
 end
 
-local function insert_keys(start, last, prefix, lhs, command_motion)
-  local first_insert = chunks[start + 1].mode:sub(1, 1)
-  if command_motion and (first_insert == "i" or first_insert == "R") then
-    local suffix = typed_keys(start + 1, last, "")
+local function insert_keys(start, last, prefix, lhs, change)
+  if change then
+    local insert_start = start + 1
+    while not chunks[insert_start].mode:match("^[iR]") do
+      insert_start = insert_start + 1
+    end
+    local suffix = typed_keys(insert_start, last, "")
     if vim.endswith(lhs, suffix) then
-      -- An expression motion can read its text object before on_key sees
-      -- it. CmdAtom keeps those keys but may label the opener with the
-      -- mapped Insert exit (for example, jjiqtestjj).
+      -- A motion may consume keys that on_key never saw. Keep them when
+      -- CmdAtom agrees with the observed operator and Insert keys.
+      local opener = typed_keys(start, insert_start - 1, "")
       local before_insert = lhs:sub(1, #lhs - #suffix)
-      local opener = chunks[start].typed
-      if vim.startswith(before_insert, opener) then
-        return prefix .. lhs
-      end
       local exit = chunks[last]
-      if exit.mapped and vim.startswith(before_insert, exit.typed) then
-        return prefix .. opener .. before_insert:sub(#exit.typed + 1) .. suffix
+      if exit.mapped and not vim.startswith(before_insert, opener) and vim.startswith(before_insert, exit.typed) then
+        before_insert = chunks[start].typed .. before_insert:sub(#exit.typed + 1)
+      end
+      if vim.startswith(before_insert, opener) then
+        return prefix .. before_insert .. suffix
       end
     end
   end
   return typed_keys(start, last, prefix)
+end
+
+local function loaded_operator_lhs(body, atom, start)
+  local chunk, motion = chunks[start], chunks[start + 1]
+  local operator = atom.operator
+  if chunk.key == ignore_key and operator and vim.startswith(body, operator)
+    and motion and motion.buf == chunk.buf and vim.startswith(motion.mode, "no") then
+    -- A lazy Normal-mode mapping can start an operator with untyped
+    -- keys. Match its observed motion before replacing the native prefix.
+    local rest = body:sub(#operator + 1)
+    if vim.startswith(rest, motion.typed) then
+      return chunk.typed .. rest
+    end
+  end
 end
 
 local function visual_end(start, bufnr)
@@ -364,8 +380,8 @@ function M.take(atom, bufnr)
   local lhs = atom.type == "visual" and visual_lhs(atom, atom.lhs) or atom.lhs
   local _, _, body = M.prefix(lhs)
   local operator = atom.atoms and atom.atoms[#atom.atoms] or atom
-  local command_motion = operator.operator == "c" and operator.cmd == ":"
-  local insert = command_motion or atom.type == "insert" or atom.type == "mapping" and lhs:sub(-1) == "\027"
+  local change = operator.operator == "c"
+  local insert = change or atom.type == "insert" or atom.type == "mapping" and lhs:sub(-1) == "\027"
   local prefix = ""
   for start = first, #chunks do
     local chunk = chunks[start]
@@ -377,13 +393,14 @@ function M.take(atom, bufnr)
       -- mapped opener with text from a later Insert-mode mapping.
       if insert and remaining ~= "" then
         local last = insert_end(start, bufnr)
-        if last and (body_length or chunk.mapped or command_motion and chunk.typed == "c") then
-          return take(start, last, insert_keys(start, last, prefix, body, command_motion), atom)
+        if last and (body_length or chunk.mapped or change and chunk.typed == "c") then
+          return take(start, last, insert_keys(start, last, prefix, body, change), atom)
         end
       end
-      if length or body_length then
-        local expected = length and lhs or body
-        local offset = (length or body_length) + 1
+      local loaded_lhs = loaded_operator_lhs(body, atom, start)
+      if length or body_length or loaded_lhs then
+        local expected = loaded_lhs or (length and lhs or body)
+        local offset = (loaded_lhs and #chunk.typed or length or body_length) + 1
         local matched = start
         while offset <= #expected and matched < #chunks do
           local following = chunks[matched + 1]
@@ -413,7 +430,7 @@ function M.take(atom, bufnr)
         -- With no match past the opener, require either a mapping or a full
         -- match so stale keys from an aborted operation aren't used.
         if chunk.mapped or matched > start then
-          local keys = prefix ~= "" and prefix .. body or expected
+          local keys = prefix ~= "" and prefix .. (loaded_lhs or body) or expected
           return take(start, matched, keys, atom)
         end
       end
