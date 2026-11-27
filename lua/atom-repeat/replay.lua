@@ -1,6 +1,9 @@
 local capture = require("atom-repeat.capture")
 
+local dot = require("atom-repeat.dot")
+
 local M = {}
+local running = false
 
 function M.validate(entries)
   if type(entries) ~= "table" or #entries == 0 then
@@ -19,6 +22,7 @@ end
 local function feed(entry)
   vim.v.errmsg = ""
   local mode = entry.replay_kind == "keys" and "nx!" or "mx!"
+  dot.playback(entry.recorded_dots)
   vim.api.nvim_feedkeys(entry.replay_value, mode, false)
   if vim.v.errmsg ~= "" then
     return false, vim.v.errmsg
@@ -26,46 +30,73 @@ local function feed(entry)
   return true
 end
 
-function M.run(entries, count, callback)
+-- CmdAtom is deferred. Pump events through a queued callback while the
+-- current Normal command still owns its position in the input stream.
+function M.flush()
+  local flushed = false
+  vim.schedule(function()
+    flushed = true
+  end)
+  return vim.wait(1000, function() return flushed end, 1)
+end
+
+function M.now(entries, count, callback)
+  if running then
+    callback(false, "a recipe is already running")
+    return
+  end
   local valid, validation_error = M.validate(entries)
   if not valid then
     callback(false, validation_error)
     return
   end
-
   count = count or 1
   if type(count) ~= "number" or count % 1 ~= 0 or count < 1 then
     callback(false, "the replay count must be a positive integer")
     return
   end
+
+  -- feedkeys(..., "x") drains all typeahead. Isolate the replay so keys
+  -- following the invocation run after its last step.
+  running = true
+  vim.fn.inputsave()
+  if not M.flush() then
+    vim.fn.inputrestore()
+    running = false
+    callback(false, "interrupted before replay")
+    return
+  end
+  capture.begin_replay()
+  local ok, message = xpcall(function()
+    for _ = 1, count do
+      for _, entry in ipairs(entries) do
+        local fed, failure = feed(entry)
+        if not fed then
+          return failure
+        end
+      end
+    end
+  end, debug.traceback)
+  dot.playback(nil)
+  local flushed = M.flush()
+  capture.end_replay()
+  vim.fn.inputrestore()
+  if not flushed and message == nil then
+    message = "interrupted while finishing replay"
+  end
+  running = false
+  callback(ok and message == nil, message)
+end
+
+-- Let the selector mapping finish in its own atom after its window closes.
+function M.run(entries, count, callback)
+  local win, buf = vim.api.nvim_get_current_win(), vim.api.nvim_get_current_buf()
   vim.schedule(function()
-    capture.set_replaying(true)
-    local replay_ok = true
-    local failure
-    local call_ok, call_error = xpcall(function()
-      for _ = 1, count do
-        for _, entry in ipairs(entries) do
-          replay_ok, failure = feed(entry)
-          if not replay_ok then
-            break
-          end
-        end
-        if not replay_ok then
-          break
-        end
-      end
-    end, debug.traceback)
-    -- CmdAtom is deferred. Keep replay capture disabled until events produced
-    -- by the fed keys have had a chance to run; otherwise a trailing insert
-    -- Atom can arrive after `feedkeys()` returns and leak into history.
-    vim.schedule(function()
-      capture.set_replaying(false)
-      if not call_ok then
-        callback(false, call_error)
-      else
-        callback(replay_ok, failure)
-      end
-    end)
+    if vim.api.nvim_get_current_win() ~= win or vim.api.nvim_get_current_buf() ~= buf then
+      callback(false, "the replay window or buffer changed")
+      return
+    end
+    M.now(entries, count, callback)
   end)
 end
 

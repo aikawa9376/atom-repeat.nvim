@@ -178,7 +178,8 @@ local function same_recipe(left, right)
   end
   for index, entry in ipairs(left.atoms) do
     local other = right.atoms[index]
-    if entry.replay_kind ~= other.replay_kind or entry.replay_value ~= other.replay_value then
+    if entry.replay_kind ~= other.replay_kind or entry.replay_value ~= other.replay_value
+      or not vim.deep_equal(entry.recorded_dots, other.recorded_dots) then
       return false
     end
   end

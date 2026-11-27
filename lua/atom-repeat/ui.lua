@@ -46,10 +46,18 @@ end
 
 local function action(entry)
   local atom = entry.atom
+  if entry.replay_kind == "lhs" then
+    local lhs = printable(entry.replay_value)
+    if atom.keys and atom.keys ~= entry.replay_value then
+      return lhs .. " → " .. printable(atom.keys)
+    end
+    return lhs
+  end
+  if entry.replay_kind == "unsupported" then
+    return atom.lhs and printable(atom.lhs) .. " [unreplayable]" or "<unsupported>"
+  end
   if atom.lhs then
-    local lhs = printable(atom.lhs)
-    local expansion = atom.keys ~= "" and printable(atom.keys) or "<callback>"
-    return lhs .. " → " .. expansion
+    return printable(atom.lhs) .. " → " .. printable(entry.replay_value)
   end
   if atom.type == "insert" and atom.text ~= nil then
     return vim.inspect(atom.text)
@@ -68,7 +76,7 @@ end
 
 local type_highlights = {
   command = "Statement",
-  ex = "Statement",
+  excmd = "Statement",
   insert = "String",
   jump = "Identifier",
   mapping = "Special",

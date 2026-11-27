@@ -1,4 +1,5 @@
 local state = require("atom-repeat.state")
+local input = require("atom-repeat.input")
 
 local M = {}
 
@@ -8,6 +9,7 @@ local M = {}
 ---@field context table
 ---@field replay_kind 'keys'|'lhs'|'unsupported'
 ---@field replay_value? string
+---@field recorded_dots? (string|false)[] Inputs of automatic dot repeats within a recorded macro.
 
 ---@class ReplayGroup
 ---@field atoms AtomHistoryEntry[]
@@ -45,17 +47,24 @@ local function evict_buckets()
   end
 end
 
-local function replay_kind(atom)
-  if type(atom.keys) == "string" and atom.keys ~= "" then
-    return "keys", atom.keys
+local function replay_kind(atom, typed)
+  if atom.keys == "" then
+    return "unsupported", nil
   end
-  if type(atom.lhs) == "string" and atom.lhs ~= "" then
-    return "lhs", atom.lhs
+  local lhs = typed or atom.lhs
+  if type(lhs) == "string" and lhs ~= "" then
+    local _, _, body = input.prefix(lhs)
+    if body ~= "." then
+      return "lhs", lhs
+    end
+  end
+  if type(atom.keys) == "string" then
+    return "keys", atom.keys
   end
   return "unsupported", nil
 end
 
-function M.add(atom, context)
+function M.ensure(context)
   local bucket = state.buckets[context.id]
   if not bucket then
     bucket = {
@@ -69,19 +78,26 @@ function M.add(atom, context)
     state.buckets[context.id] = bucket
   end
 
+  touch(bucket)
+  evict_buckets()
+  return bucket
+end
+
+function M.add(atom, context, typed)
+  local bucket = M.ensure(context)
   state.sequence = state.sequence + 1
   local copied = vim.deepcopy(atom)
-  local kind, value = replay_kind(copied)
-  bucket.entries[#bucket.entries + 1] = {
+  local kind, value = replay_kind(copied, typed)
+  local entry = {
     seq = state.sequence,
     atom = copied,
     context = vim.deepcopy(context),
     replay_kind = kind,
     replay_value = value,
   }
+  bucket.entries[#bucket.entries + 1] = entry
   trim_bucket(bucket)
-  touch(bucket)
-  evict_buckets()
+  return entry
 end
 
 function M.get(id, should_touch)

@@ -45,6 +45,9 @@ local function pad(value, width)
 end
 
 local function atom_preview(entry)
+  if entry.replay_value then
+    return printable(entry.replay_value)
+  end
   local atom = entry.atom or {}
   if atom.lhs then
     return printable(atom.lhs)

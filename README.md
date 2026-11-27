@@ -1,12 +1,21 @@
 # atom-repeat.nvim
 
-`atom-repeat.nvim` turns Neovim's semantic [`CmdAtom`](https://neovim.io/doc/user/autocmd.html#CmdAtom)
+`atom-repeat.nvim` turns Neovim's [`CmdAtom`](https://neovim.io/doc/user/autocmd.html#CmdAtom)
 events into retrospective macros. Edit normally, open the recent action history,
-select the useful part, and replay it at the cursor where you opened the history.
+and replay a selection at another cursor position. Input such as nvim-surround's
+`ysiw)` runs through the current mappings, including the keys the plugin asked for.
 
-Unlike a traditional macro, recording does not have to be started in advance.
-The plugin stores resolved action keys and structured CmdAtom metadata, not a
-raw stream of keystrokes.
+Use `:AtomRemember 3` after three actions to make them a macro. Move to the next
+target and press `.` to run all three, or `2.` to run the whole sequence twice.
+Remembering the actions does not execute them.
+
+If you explicitly record with `qa … q`, finishing the recording also makes
+those keystrokes available to `.` and `:AtomReplayLast`. The plugin snapshots
+the newly recorded bytes, so you can reuse register `a` afterward.
+
+Recording starts at setup. The plugin keeps one row per completed action and
+can also repeat a mapped edit with `.` without explicit registration by the
+other plugin.
 
 ## Requirements
 
@@ -66,11 +75,13 @@ Counts are supported, for example `3dd` and `2p`. These edits affect only the
 open replay recipe and never touch Vim registers or the stored chronological
 history. Close with `q` to discard them; `<CR>` replays the displayed order.
 
-After a history or saved-recipe replay succeeds, pressing `.` repeats that replay.
-An explicit count replaces the stored count, so `3.` runs the recipe three
-times. The plugin's dot handler falls back to Neovim's native `.` after another
-change. If normal-mode `.` already has a user mapping, atom-repeat leaves it
-untouched and reports that its dot backend is disabled.
+Press `.` after a captured mapped edit to run the mapping again. A count or
+register supplied to `.` overrides the prefix of the original edit. Ordinary
+edits still use Neovim's native dot repeat. After a history or saved-recipe
+replay succeeds, `.` repeats that recipe and `3.` runs it three times.
+
+Existing Normal-mode `.` mappings keep precedence. You can bind
+`<Plug>(AtomRepeatDot)` to another key for automatic mapped-edit repeat.
 
 The last replay is also available as a regular `<Plug>` target:
 
@@ -91,11 +102,11 @@ and those library edits are persisted immediately.
 
 ```lua
 require("atom-repeat").setup({
+  capture_lua_prompts = true, -- include getchar/getcharstr input from Lua Insert mappings
   history_size = 500, -- entries retained per project/branch bucket
   max_buckets = 20,  -- least-recently-used bucket limit
-  -- Keep the first 3 atoms in a consecutive h/j/k/l/w/b run.
-  -- Use false for unlimited history, or 0 to omit these motions.
-  max_consecutive_motions = 3,
+  -- Keep all motions. Use 3 for the first three per run or 0 to omit them.
+  max_consecutive_motions = false,
   recipes = {
     max_items = 20, -- saved recipes per project/branch
     persist = true,
@@ -113,7 +124,7 @@ positive integers; the motion limit is a non-negative integer or `false`.
 Calling `setup()` again preserves history, replaces plugin-owned interfaces
 without duplication, and immediately applies smaller capacity limits.
 
-Saved recipes use binary-safe MessagePack so resolved raw key bytes survive a
+Saved recipes use binary-safe MessagePack so raw key bytes survive a
 restart. The file is atomically replaced at
 `stdpath("state")/atom-repeat/recipes.mpack` by default. Set
 `recipes.persist = false` for a session-only recipe library.
@@ -127,7 +138,8 @@ Commands:
 | Command | Action |
 | --- | --- |
 | `:AtomHistory` | Open or refresh the current history snapshot |
-| `:AtomReplayLast` | Replay the current bucket's last successful group once |
+| `:AtomRemember [N]` | Save the last N history actions for dot repeat (default 1) |
+| `:AtomReplayLast` | Replay the current bucket's last group once |
 | `:AtomReplaySelect` | Select and execute a saved replay recipe |
 | `:AtomReplayClear` | Delete saved recipes for the current project/branch |
 | `:AtomReplayClear!` | Delete every saved recipe |
@@ -170,17 +182,18 @@ of installing a second dispatcher. Other existing `.` mappings are preserved.
 
 ## Replay semantics
 
-- Every top-level CmdAtom is one history row. Composite `atoms` remain nested
+- Each captured top-level CmdAtom is one row. Macro recording controls are omitted. Composite `atoms` remain nested
   and are not flattened.
-- Non-empty resolved `keys` are fed without remapping. When `keys` is empty and
-  `lhs` is available (for example, a Lua callback mapping), `lhs` is fed with
-  current mappings enabled.
-- Consequently, a changed callback mapping runs its current callback. If the
-  mapping was removed, the LHS is interpreted as normal input in the current
-  mode.
-- A selection containing an entry with neither `keys` nor `lhs` is rejected
-  before any action runs. Runtime errors stop the remaining queue; earlier
-  changes are not rolled back.
+- Replay prefers the input (`lhs`) and enables mappings. `vim.on_key()` supplies
+  typed prefixes and Insert-mode input when it can be matched to the atom.
+  A changed mapping runs its current definition. A removed mapping is
+  interpreted as ordinary input in the current mode.
+- Resolved `keys` are fed without remapping when the atom has no input or
+  represents a native dot repeat. Previously saved recipes keep their
+  stored replay strategy.
+- An explicit empty `keys` field marks an unreplayable action. Selecting such
+  a row or one with no usable input rejects the whole selection. A runtime error
+  stops the queue and any changes already made stay in the buffer.
 - Replay starts in Normal mode at an extmark tracking the cursor position where
   history was opened. A Visual CmdAtom recreates its own selection from its
   stored resolved keys. An existing Visual selection is not substituted.
@@ -195,8 +208,13 @@ persistence is enabled.
 
 ## Limitations
 
-- A Lua callback or `<Cmd>` mapping can only be repeated by invoking its current
-  LHS; direct API side effects cannot be converted into deterministic keys.
+- Replay uses the current buffer, plugin state, and mappings. Terminal-mode
+  input and edits completed later by an asynchronous callback have no reliable
+  action boundary. With `capture_lua_prompts` enabled, setup wraps the Lua
+  `vim.fn.getchar` and `vim.fn.getcharstr` functions to observe characters
+  consumed by Insert mappings. Direct Vimscript calls and functions cached
+  before setup can bypass these hooks. Explicit macro recording also captures
+  prompt input through Neovim's own recorder.
 - Arbitrary Ex actions are replayed when explicitly selected, including actions
   with external or destructive side effects.
 - Entry count is bounded, but individual payload size is not. Large insert or

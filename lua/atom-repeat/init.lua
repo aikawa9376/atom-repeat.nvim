@@ -1,6 +1,7 @@
 local capture = require("atom-repeat.capture")
 local config = require("atom-repeat.config")
 local dot = require("atom-repeat.dot")
+local input = require("atom-repeat.input")
 local recipe_ui = require("atom-repeat.recipe_ui")
 local recipes = require("atom-repeat.recipes")
 local replay = require("atom-repeat.replay")
@@ -34,7 +35,7 @@ local function replay_last(count)
     notify("no replay group for the current project and branch", vim.log.levels.WARN)
     return
   end
-  replay.run(group.atoms, count or 1, function(ok, replay_error)
+  replay.now(group.atoms, count or 1, function(ok, replay_error)
     if ok then
       if group.id then
         recipes.touch(context.id, group.id)
@@ -60,6 +61,9 @@ local function install_interfaces()
   replace_command("AtomHistory", function()
     M.open()
   end, { desc = "Open CmdAtom history" })
+  replace_command("AtomRemember", function(command)
+    M.remember(command.args == "" and 1 or tonumber(command.args) or 0)
+  end, { nargs = "?", desc = "Use the last N actions as a repeatable recipe" })
   replace_command("AtomReplayLast", function()
     M.replay_last()
   end, { desc = "Replay the last atom group" })
@@ -132,7 +136,39 @@ end
 function M.open()
   assert_initialized()
   capture.ignore_next()
-  ui.open()
+  if input.pending() then
+    -- Include CmdAtoms emitted by input immediately before the command.
+    vim.schedule(ui.open)
+  else
+    ui.open()
+  end
+end
+
+function M.remember(count)
+  assert_initialized()
+  count = count or 1
+  if type(count) ~= "number" or count < 1 or count % 1 ~= 0 then
+    error("atom-repeat: expected a positive action count", 2)
+  end
+  capture.ignore_next()
+  if input.pending() and not replay.flush() then
+    return
+  end
+  local context = scope.resolve(vim.api.nvim_get_current_buf())
+  local bucket = store.get(context.id)
+  if not bucket or #bucket.entries < count then
+    notify("too few actions in the current history", vim.log.levels.WARN)
+    return
+  end
+  local entries = vim.list_slice(bucket.entries, #bucket.entries - count + 1)
+  local valid, message = replay.validate(entries)
+  if not valid then
+    notify(message, vim.log.levels.WARN)
+    return
+  end
+  local saved = recipes.add(context, { atoms = entries, created_at = os.time(), repeatable = true })
+  store.set_last_group(context.id, saved)
+  dot.set("<Plug>(AtomReplayLast)", { count = 1 })
 end
 
 function M.replay_last()

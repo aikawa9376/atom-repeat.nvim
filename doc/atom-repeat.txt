@@ -31,9 +31,10 @@ dependencies and does not emulate CmdAtom on older Neovim versions.
 Setup is required and starts history capture: >lua
 
     require("atom-repeat").setup({
+      capture_lua_prompts = true,
       history_size = 500,
       max_buckets = 20,
-      max_consecutive_motions = 3,
+      max_consecutive_motions = false,
       recipes = {
         max_items = 20,
         persist = true,
@@ -45,10 +46,12 @@ Setup is required and starts history capture: >lua
       },
     })
 <
+`capture_lua_prompts` enables wrappers for vim.fn.getchar and vim.fn.getcharstr
+to include consumed keys in the triggering Insert mapping.
 `history_size` is the entry limit for each project/branch bucket.
 `max_buckets` is the least-recently-used bucket limit.
 `max_consecutive_motions` retains only the first N Atoms in a consecutive run
-of h, j, k, l, w, or b. Use false for unlimited capture or 0 to omit them. A
+of h, j, k, l, w, or b. The default false keeps all motions. Use 0 to omit them. A
 single-key callback mapping on one of those LHS keys also counts as navigation.
 A different Atom resets the run, and a counted command such as 3j is one Atom.
 `ui.height` is the bottom history split height.
@@ -111,7 +114,11 @@ the UI open if the origin window, buffer, project, or branch changed.
 ==============================================================================
 4. REPEAT                                                 *atom-repeat-repeat*
 
-The most recently successful ReplayGroup is stored separately for every
+Use |:AtomRemember| to save recent actions and arm dot immediately. Finishing
+a recording with qa ... q also arms dot with the recorded keys. The snapshot
+contains the newly performed input even when appending to a register.
+
+The current ReplayGroup is stored separately for every
 project/branch bucket. Repeat it once with |:AtomReplayLast| or map the provided
 Plug target: >lua
 
@@ -119,10 +126,13 @@ Plug target: >lua
 <
 The Plug mapping honors |v:count1|. :AtomReplayLast always runs once.
 
-After a replay succeeds, |.| repeats that replay. A supplied count replaces the
-stored count. After another buffer change, |.| falls back to Neovim's native
-dot command. If normal-mode `.` is already mapped, atom-repeat does not replace
-it and its dot backend is disabled.
+After a captured mapped edit, |.| runs the mapping again with its input. A
+count or register supplied to |.| overrides the original prefix. Ordinary edits
+use native dot. After a recipe replay succeeds, |.| repeats the recipe and a
+count selects how many times to run it.
+
+An existing Normal-mode `.` mapping keeps precedence. Bind
+`<Plug>(AtomRepeatDot)` to another key to use automatic mapped-edit repeat.
 
 Other plugins may register their own repeatable <Plug> mappings after making a
 change: >lua
@@ -171,6 +181,10 @@ It is enabled by default. Disable it with `recipes.persist = false`.
                                                         *:AtomHistory*
 :AtomHistory           Open or refresh the current history snapshot.
 
+                                                        *:AtomRemember*
+:AtomRemember [N]      Save the last N actions (default 1) for |.| and
+                      |:AtomReplayLast|. Execution starts on replay.
+
                                                       *:AtomReplayLast*
 :AtomReplayLast        Replay the current bucket's last group once.
 
@@ -190,22 +204,21 @@ It is enabled by default. Disable it with `recipes.persist = false`.
 ==============================================================================
 7. REPLAY SEMANTICS                                     *atom-repeat-semantics*
 
-Every top-level CmdAtom is stored as one row. Nested composite `atoms` and all
+Each captured CmdAtom is one row. Recording start/stop controls are omitted. Nested composite `atoms` and all
 other structured fields are deep-copied without flattening or payload limits.
 
-Replay chooses one of these strategies:
+Replay uses the action's input (`lhs`) with mappings enabled. When observable
+through |vim.on_key()|, typed counts, registers, and Insert-mode keys supplement
+the input reported by CmdAtom. A changed mapping runs its current definition.
+If it was removed, the LHS is ordinary input in the current mode.
 
-1. A non-empty `keys` field is sent to |nvim_feedkeys()| without remapping.
-2. Otherwise a non-empty `lhs` field is sent with mappings enabled.
-3. An Atom with neither field is unsupported.
+When the input is missing or represents a native dot repeat, replay uses
+resolved `keys` without remapping. Saved recipes retain their stored strategy.
+An explicit empty `keys` value marks an unreplayable atom.
 
 The whole range is validated before replay. An unsupported entry prevents all
 execution. A runtime error stops the remaining queue, but changes made by
 earlier entries are not rolled back.
-
-LHS replay uses the mapping active at replay time. A changed callback therefore
-runs the new callback. A removed mapping causes the LHS to be interpreted as
-ordinary input in the current mode.
 
 Initial history replay starts in Normal mode at the cursor snapshot. Stored
 Visual Atom keys recreate their own selection. An existing Visual selection is
@@ -227,8 +240,10 @@ exceeded. Saved replay recipes are maintained separately and may persist.
 ==============================================================================
 8. LIMITATIONS                                         *atom-repeat-limitations*
 
-- Lua callback and <Cmd> mapping side effects can only be repeated through the
-  mapping's current LHS. Deterministic replay is not guaranteed.
+- Replay uses the current buffer, plugin state, and mappings. CmdAtom excludes
+  terminal-mode input. A mapping can prompt again if Neovim omitted the keys
+  it consumed, for example a direct Vimscript getchar() call. Recording with
+  qa ... q also collects prompt keys through the native macro recorder.
 - Explicitly selected Ex Atoms are replayed without an extra confirmation.
 - Individual Atom payloads have no byte limit.
 - Native redo registration is not exposed by the current public Neovim API.

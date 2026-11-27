@@ -9,6 +9,7 @@ local M = {}
 ---@field path string
 
 ---@class AtomRepeatConfig
+---@field capture_lua_prompts boolean
 ---@field history_size integer
 ---@field max_buckets integer
 ---@field max_consecutive_motions integer|false
@@ -17,9 +18,10 @@ local M = {}
 
 ---@type AtomRepeatConfig
 local defaults = {
+  capture_lua_prompts = true,
   history_size = 500,
   max_buckets = 20,
-  max_consecutive_motions = 3,
+  max_consecutive_motions = false,
   recipes = {
     max_items = 20,
     persist = true,
@@ -68,6 +70,7 @@ function M.resolve(opts)
   end
 
   validate_keys(opts, {
+    capture_lua_prompts = true,
     history_size = true,
     max_buckets = true,
     max_consecutive_motions = true,
@@ -88,6 +91,9 @@ function M.resolve(opts)
   end
 
   local config = vim.tbl_deep_extend("force", vim.deepcopy(defaults), opts)
+  if type(config.capture_lua_prompts) ~= "boolean" then
+    fail("opts.capture_lua_prompts", "expected a boolean")
+  end
   positive_integer(config.history_size, "opts.history_size")
   positive_integer(config.max_buckets, "opts.max_buckets")
   motion_limit(config.max_consecutive_motions)
