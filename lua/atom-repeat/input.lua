@@ -9,13 +9,19 @@ local ignore_key = vim.keycode("<Ignore>")
 local pending_operator
 local completed_operators = {}
 local record_operator
+local recovered_exit
 
-function M.reset()
+local function reset_chunks()
   chunks = {}
   first = 1
   prompt_chunk = nil
   pending_operator = nil
   completed_operators = {}
+end
+
+function M.reset()
+  reset_chunks()
+  recovered_exit = nil
 end
 
 -- getchar() bypasses on_key. For Lua Insert mappings associate a consumed
@@ -119,6 +125,9 @@ function M.setup(group, capture_lua_prompts, on_missing_operator)
       }
       if chunk.mode == "n" then
         finish_operator()
+        if recovered_exit and recovered_exit.buf == chunk.buf and recovered_exit.lhs == typed then
+          recovered_exit = nil
+        end
       end
       chunks[#chunks + 1] = chunk
       watch_operator(chunk)
@@ -152,7 +161,7 @@ function M.setup(group, capture_lua_prompts, on_missing_operator)
           vim.schedule(function()
             if chunks == batch and #chunks == last then
               M.flush()
-              M.reset()
+              reset_chunks()
             end
           end)
         end
@@ -204,12 +213,20 @@ local function typed_keys(start, last, prefix)
   return raw
 end
 
+local function is_mapped_exit(operator)
+  local exit = chunks[operator.last]
+  return operator.name == "c" and exit.mapped and exit.key == "\027"
+end
+
 local function flush_operators(before)
   while completed_operators[1] and completed_operators[1].last < before do
     local operator = table.remove(completed_operators, 1)
     if operator.start >= first then
       local keys = typed_keys(operator.start, operator.last, "")
       first = operator.last + 1
+      if is_mapped_exit(operator) then
+        recovered_exit = { buf = operator.buf, lhs = chunks[operator.last].typed, undoseq = operator.undoseq }
+      end
       record_operator({
         type = "operator",
         lhs = keys,
@@ -245,7 +262,7 @@ local function take(start, last, keys, atom)
   end
   first = last + 1
   if first > #chunks then
-    M.reset()
+    reset_chunks()
   end
   return repeated or keys, mapped, ignored
 end
@@ -288,6 +305,28 @@ local function insert_end(start, bufnr)
   end
 end
 
+local function insert_keys(start, last, prefix, lhs, command_motion)
+  local first_insert = chunks[start + 1].mode:sub(1, 1)
+  if command_motion and (first_insert == "i" or first_insert == "R") then
+    local suffix = typed_keys(start + 1, last, "")
+    if vim.endswith(lhs, suffix) then
+      -- An expression motion can read its text object before on_key sees
+      -- it. CmdAtom keeps those keys but may label the opener with the
+      -- mapped Insert exit (for example, jjiqtestjj).
+      local before_insert = lhs:sub(1, #lhs - #suffix)
+      local opener = chunks[start].typed
+      if vim.startswith(before_insert, opener) then
+        return prefix .. lhs
+      end
+      local exit = chunks[last]
+      if exit.mapped and vim.startswith(before_insert, exit.typed) then
+        return prefix .. opener .. before_insert:sub(#exit.typed + 1) .. suffix
+      end
+    end
+  end
+  return typed_keys(start, last, prefix)
+end
+
 local function visual_end(start, bufnr)
   local last = start
   for i = start + 1, #chunks do
@@ -308,9 +347,25 @@ function M.take(atom, bufnr)
   if not atom.lhs or atom.lhs == "" then
     return
   end
+  if atom.type == "mapping" and not atom.changed and atom.keys == nil then
+    local recovered = completed_operators[1]
+    if recovered and recovered.buf == bufnr and recovered.undoseq == atom.undoseq
+      and is_mapped_exit(recovered) and chunks[recovered.last].typed == atom.lhs then
+      flush_operators(recovered.last + 1)
+    end
+    -- A delayed atom for the mapped Insert exit can arrive after its
+    -- enclosing operator has already been recovered and its keys cleared.
+    if recovered_exit and recovered_exit.buf == bufnr and recovered_exit.undoseq == atom.undoseq
+      and recovered_exit.lhs == atom.lhs then
+      recovered_exit = nil
+      return nil, nil, true
+    end
+  end
   local lhs = atom.type == "visual" and visual_lhs(atom, atom.lhs) or atom.lhs
   local _, _, body = M.prefix(lhs)
-  local insert = atom.type == "insert" or atom.type == "mapping" and lhs:sub(-1) == "\027"
+  local operator = atom.atoms and atom.atoms[#atom.atoms] or atom
+  local command_motion = operator.operator == "c" and operator.cmd == ":"
+  local insert = command_motion or atom.type == "insert" or atom.type == "mapping" and lhs:sub(-1) == "\027"
   local prefix = ""
   for start = first, #chunks do
     local chunk = chunks[start]
@@ -322,8 +377,8 @@ function M.take(atom, bufnr)
       -- mapped opener with text from a later Insert-mode mapping.
       if insert and remaining ~= "" then
         local last = insert_end(start, bufnr)
-        if last and (body_length or chunk.mapped) then
-          return take(start, last, typed_keys(start, last, prefix), atom)
+        if last and (body_length or chunk.mapped or command_motion and chunk.typed == "c") then
+          return take(start, last, insert_keys(start, last, prefix, body, command_motion), atom)
         end
       end
       if length or body_length then

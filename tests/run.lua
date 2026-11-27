@@ -330,6 +330,48 @@ test("a first-use operator mapping requeued by a loader is recorded in input ord
   end)
 end)
 
+test("remapped change keeps the text object read by a Vimscript expression", function()
+  reset_history()
+  local buf = fresh_buffer({ "[one]", "[two]", "'three'", '"four"' })
+  local opts = { buffer = buf }
+  vim.keymap.set("n", "c", "m`mvc", opts)
+  vim.keymap.set("i", "jj", "<Esc>", opts)
+  vim.cmd([[
+    function! AtomRepeatTestReadObject() abort
+      let g:atom_repeat_test_object = nr2char(getchar())
+      return '@(atom-repeat-test-object)'
+    endfunction
+    function! AtomRepeatTestSelectObject() abort
+      execute 'normal! vi' . (g:atom_repeat_test_object ==# 'b' ? ']' : getline('.')[0])
+    endfunction
+  ]])
+  vim.keymap.set("o", "i", "AtomRepeatTestReadObject()", { buffer = buf, expr = true, remap = true })
+  vim.keymap.set("o", "@(atom-repeat-test-object)", ":<C-U>call AtomRepeatTestSelectObject()<CR>", opts)
+
+  vim.api.nvim_win_set_cursor(0, { 1, 1 })
+  vim.api.nvim_input("cibtest<Esc>")
+  wait_for(function()
+    return current_bucket() and #current_bucket().entries >= 1
+  end)
+  eq(vim.keycode("cibtest<Esc>"), current_bucket().entries[1].replay_value)
+  vim.api.nvim_win_set_cursor(0, { 2, 1 })
+  vim.api.nvim_input(":AtomReplayLast<CR>")
+  wait_for(function() return vim.api.nvim_get_current_line() == "[test]" end)
+
+  vim.api.nvim_win_set_cursor(0, { 3, 1 })
+  vim.api.nvim_input("ciqtestjj")
+  wait_for(function() return #current_bucket().entries >= 2 end)
+  eq("ciqtestjj", current_bucket().entries[2].replay_value)
+  vim.api.nvim_win_set_cursor(0, { 4, 1 })
+  vim.api.nvim_input(".")
+  wait_for(function() return vim.api.nvim_get_current_line() == '"test"' end)
+  eq({ "[test]", "[test]", "'test'", '"test"' }, vim.api.nvim_buf_get_lines(buf, 0, -1, false))
+
+  vim.cmd("delfunction AtomRepeatTestReadObject")
+  vim.cmd("delfunction AtomRepeatTestSelectObject")
+  vim.g.atom_repeat_test_object = nil
+end)
+
 test("CmdAtom explicitly unreplayable entries cannot run their lhs", function()
   reset_history()
   fresh_buffer()
