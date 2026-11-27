@@ -679,6 +679,25 @@ test("retrospective recipes and mapped dots preserve typeahead order", function(
   eq(3, #current_bucket().last_group.atoms)
 end)
 
+test("AtomReplayLast runs keys queued by a replayed mapping without more input", function()
+  reset_history()
+  local buf = fresh_buffer({ "x" })
+  vim.keymap.set("n", "<F8>", function()
+    vim.schedule(function()
+      vim.api.nvim_feedkeys("A!\027", "n", false)
+    end)
+  end, { buffer = buf })
+  local context = scope.resolve(buf)
+  store.add({ type = "mapping", lhs = vim.keycode("<F8>") }, context)
+  store.set_last_group(context.id, { atoms = current_bucket().entries })
+
+  vim.api.nvim_input(":AtomReplayLast<CR>")
+  wait_for(function()
+    return vim.api.nvim_get_current_line() == "x!"
+  end, "the command and the mapping's queued edit should finish after Enter")
+  eq(1, #current_bucket().entries, "the replay command should stay out of history")
+end)
+
 test("retrospective Insert capture keeps Lua prompt input across idle pauses", function()
   reset_history()
   local buf = fresh_buffer({ "x", "y" })

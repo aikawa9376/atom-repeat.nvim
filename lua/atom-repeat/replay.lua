@@ -56,16 +56,15 @@ function M.now(entries, count, callback)
     return
   end
 
-  -- feedkeys(..., "x") drains all typeahead. Isolate the replay so keys
-  -- following the invocation run after its last step.
   running = true
-  vim.fn.inputsave()
   if not M.flush() then
-    vim.fn.inputrestore()
     running = false
     callback(false, "interrupted before replay")
     return
   end
+  -- feedkeys(..., "x") drains all typeahead. Isolate the replay so keys
+  -- following the invocation run after its last step.
+  vim.fn.inputsave()
   capture.begin_replay()
   local ok, message = xpcall(function()
     for _ = 1, count do
@@ -78,9 +77,11 @@ function M.now(entries, count, callback)
     end
   end, debug.traceback)
   dot.playback(nil)
+  -- Scheduled mapping callbacks may queue more keys while we flush CmdAtom
+  -- events. Restore typeahead first so those callbacks keep their input.
+  vim.fn.inputrestore()
   local flushed = M.flush()
   capture.end_replay()
-  vim.fn.inputrestore()
   if not flushed and message == nil then
     message = "interrupted while finishing replay"
   end
@@ -88,7 +89,7 @@ function M.now(entries, count, callback)
   callback(ok and message == nil, message)
 end
 
--- Let the selector mapping finish in its own atom after its window closes.
+-- Leave the Ex command or selector mapping before feeding Normal-mode keys.
 function M.run(entries, count, callback)
   local win, buf = vim.api.nvim_get_current_win(), vim.api.nvim_get_current_buf()
   vim.schedule(function()

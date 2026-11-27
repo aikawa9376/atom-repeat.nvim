@@ -27,7 +27,7 @@ local function owned_action(callback)
   callback()
 end
 
-local function replay_last(count)
+local function replay_last(count, run)
   assert_initialized()
   local context = scope.resolve(vim.api.nvim_get_current_buf())
   local group = store.get_last_group(context.id) or recipes.first(context.id)
@@ -35,7 +35,7 @@ local function replay_last(count)
     notify("no replay group for the current project and branch", vim.log.levels.WARN)
     return
   end
-  replay.now(group.atoms, count or 1, function(ok, replay_error)
+  run(group.atoms, count, function(ok, replay_error)
     if ok then
       if group.id then
         recipes.touch(context.id, group.id)
@@ -43,7 +43,7 @@ local function replay_last(count)
         local saved = recipes.add(context, group)
         store.set_last_group(context.id, saved)
       end
-      dot.set("<Plug>(AtomReplayLast)", { count = count or 1 })
+      dot.set("<Plug>(AtomReplayLast)", { count = count })
     elseif not ok then
       notify("replay stopped: " .. tostring(replay_error), vim.log.levels.ERROR)
     end
@@ -65,7 +65,8 @@ local function install_interfaces()
     M.remember(command.args == "" and 1 or tonumber(command.args) or 0)
   end, { nargs = "?", desc = "Use the last N actions as a repeatable recipe" })
   replace_command("AtomReplayLast", function()
-    M.replay_last()
+    capture.ignore_next()
+    replay_last(1, replay.run)
   end, { desc = "Replay the last atom group" })
   replace_command("AtomReplaySelect", function()
     M.select()
@@ -112,7 +113,7 @@ local function install_interfaces()
 
   vim.keymap.set("n", "<Plug>(AtomReplayLast)", function()
     owned_action(function()
-      replay_last(vim.v.count1)
+      replay_last(vim.v.count1, replay.now)
     end)
   end, { silent = true, desc = "Replay the last atom group" })
 end
@@ -174,7 +175,7 @@ end
 function M.replay_last()
   assert_initialized()
   capture.ignore_next()
-  replay_last(1)
+  replay_last(1, replay.now)
 end
 
 function M.select()
