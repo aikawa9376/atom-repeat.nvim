@@ -90,7 +90,9 @@ vim.keymap.set("n", "g.", "<Plug>(AtomReplayLast)")
 ```
 
 Counts are supported by the `<Plug>` mapping, so `3g.` replays the last group
-three times. `:AtomReplayLast` always replays it once.
+three times. `:AtomReplayLast` runs the active group once. To replay a recipe
+saved in an earlier session, choose it with `:AtomReplaySelect`. Running it
+there makes it the active group.
 
 Every successfully replayed history recipe is also saved in a per-project,
 per-branch MRU library. Open it with `:AtomReplaySelect`; the newest recipe is
@@ -139,12 +141,14 @@ Commands:
 | --- | --- |
 | `:AtomHistory` | Open or refresh the current history snapshot |
 | `:AtomRemember [N]` | Save the last N history actions for dot repeat (default 1) |
-| `:AtomReplayLast` | Replay the current bucket's last group once |
+| `:AtomReplayLast` | Replay the active group for the current project/branch once |
 | `:AtomReplaySelect` | Select and execute a saved replay recipe |
-| `:AtomReplayClear` | Delete saved recipes for the current project/branch |
-| `:AtomReplayClear!` | Delete every saved recipe |
-| `:AtomHistoryClear` | Clear the current project/branch bucket |
-| `:AtomHistoryClear!` | Clear every in-memory Atom history bucket |
+| `:AtomReplayClear` | Clear the saved recipes and active group for the current project/branch |
+| `:AtomReplayClear!` | Clear all saved recipes and active groups |
+| `:AtomHistoryClear` | Clear the history and active group for the current project/branch |
+| `:AtomHistoryClear!` | Clear all in-memory history and active groups |
+
+Clearing history keeps the saved recipes available in `:AtomReplaySelect`.
 
 Public Lua API:
 

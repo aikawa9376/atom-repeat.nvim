@@ -21,7 +21,9 @@ end
 
 local function feed(entry)
   vim.v.errmsg = ""
-  local mode = entry.replay_kind == "keys" and "nx!" or "mx!"
+  -- Bounded execution resolves a pending mapping prefix at the end of
+  -- typeahead, even when a mapping such as Hydra disables 'timeout'.
+  local mode = entry.replay_kind == "keys" and "nx" or "mx"
   dot.playback(entry.recorded_dots)
   vim.api.nvim_feedkeys(entry.replay_value, mode, false)
   if vim.v.errmsg ~= "" then

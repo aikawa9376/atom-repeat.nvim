@@ -30,9 +30,9 @@ end
 local function replay_last(count, run)
   assert_initialized()
   local context = scope.resolve(vim.api.nvim_get_current_buf())
-  local group = store.get_last_group(context.id) or recipes.first(context.id)
+  local group = store.get_last_group(context.id)
   if not group then
-    notify("no replay group for the current project and branch", vim.log.levels.WARN)
+    notify("no active replay group. Use :AtomRemember or :AtomReplaySelect", vim.log.levels.WARN)
     return
   end
   run(group.atoms, count, function(ok, replay_error)
@@ -75,12 +75,14 @@ local function install_interfaces()
     owned_action(function()
       if command.bang then
         store.clear_all()
+        dot.clear_recipe()
         ui.close(true)
         notify("cleared all history buckets")
         return
       end
       local bucket_id = state.ui and state.ui.bucket_id or scope.resolve(vim.api.nvim_get_current_buf()).id
       store.clear(bucket_id)
+      dot.clear_recipe(bucket_id)
       if state.ui and state.ui.bucket_id == bucket_id then
         ui.close(true)
       end
@@ -91,8 +93,10 @@ local function install_interfaces()
     owned_action(function()
       if command.bang then
         recipes.clear_all()
+        store.clear_last_groups()
+        dot.clear_recipe()
         recipe_ui.close(true)
-        notify("cleared all saved replay recipes")
+        notify("cleared all saved recipes and active replay groups")
         return
       end
       local bucket_id
@@ -104,10 +108,12 @@ local function install_interfaces()
         bucket_id = scope.resolve(vim.api.nvim_get_current_buf()).id
       end
       recipes.clear(bucket_id)
+      store.set_last_group(bucket_id, nil)
+      dot.clear_recipe(bucket_id)
       if state.recipe_ui and state.recipe_ui.bucket_id == bucket_id then
         recipe_ui.close(true)
       end
-      notify("cleared saved replay recipes for the current project and branch")
+      notify("cleared saved recipes and the active replay group for this project and branch")
     end)
   end, { bang = true, desc = "Clear saved atom replay recipes" })
 

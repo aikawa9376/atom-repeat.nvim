@@ -124,7 +124,8 @@ Plug target: >lua
 
     vim.keymap.set("n", "g.", "<Plug>(AtomReplayLast)")
 <
-The Plug mapping honors |v:count1|. :AtomReplayLast always runs once.
+The Plug mapping honors |v:count1|. :AtomReplayLast runs the active group once.
+To activate a recipe saved in an earlier session, run it from |:AtomReplaySelect|.
 
 After a captured mapped edit, |.| runs the mapping again with its input. A
 count or register supplied to |.| overrides the original prefix. Ordinary edits
@@ -186,20 +187,20 @@ It is enabled by default. Disable it with `recipes.persist = false`.
                       |:AtomReplayLast|. Execution starts on replay.
 
                                                       *:AtomReplayLast*
-:AtomReplayLast        Replay the current bucket's last group once.
+:AtomReplayLast        Replay the current bucket's active group once.
 
                                                     *:AtomReplaySelect*
 :AtomReplaySelect      Open the current bucket's saved recipe selector.
 
                                                      *:AtomReplayClear*
-:AtomReplayClear       Delete saved recipes for the current bucket.
-:AtomReplayClear!      Delete every saved recipe.
+:AtomReplayClear       Clear the current bucket's saved recipes and active group.
+:AtomReplayClear!      Clear all saved recipes and active groups.
 
                                                     *:AtomHistoryClear*
-:AtomHistoryClear      Clear the current in-memory history bucket.
-:AtomHistoryClear!     Clear all in-memory history buckets. Persistent saved
-                      recipes are unaffected. Session sequence numbers are not
-                      reset or reused.
+:AtomHistoryClear      Clear the current bucket's history and active group.
+:AtomHistoryClear!     Clear all in-memory history and active groups. Saved
+                      recipes remain in |:AtomReplaySelect|. Session sequence
+                      numbers remain monotonic.
 
 ==============================================================================
 7. REPLAY SEMANTICS                                     *atom-repeat-semantics*

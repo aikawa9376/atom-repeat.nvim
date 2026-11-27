@@ -256,6 +256,7 @@ local function execute_current()
     return
   end
   local bucket_id = session.bucket_id
+  local context = scope.resolve(session.origin_buf)
   local origin_win = session.origin_win
   local recipe_id = recipe.id
   local group = vim.deepcopy(recipe)
@@ -268,6 +269,7 @@ local function execute_current()
   replay.run(group.atoms, 1, function(ok, replay_error)
     if ok then
       recipes.touch(bucket_id, recipe_id)
+      store.ensure(context)
       store.set_last_group(bucket_id, group)
       dot.set("<Plug>(AtomReplayLast)", { count = 1 })
     else

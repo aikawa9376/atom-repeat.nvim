@@ -497,7 +497,7 @@ test("AtomReplaySelect executes and persistently edits saved recipes", function(
   atom_repeat.replay_last()
   wait_for(function()
     return vim.api.nvim_get_current_line() == "x2"
-  end, "ReplayLast should use the persisted MRU recipe")
+  end, "ReplayLast should use the recipe run from the selector")
 
   atom_repeat.select()
   vim.fn.setreg('"', "keep-recipe-register")
@@ -696,6 +696,62 @@ test("AtomReplayLast runs keys queued by a replayed mapping without more input",
     return vim.api.nvim_get_current_line() == "x!"
   end, "the command and the mapping's queued edit should finish after Enter")
   eq(1, #current_bucket().entries, "the replay command should stay out of history")
+end)
+
+test("AtomReplayLast finishes a plugin mapping with a pending prefix and no timeout", function()
+  reset_history()
+  local buf = fresh_buffer({ "line", "next" })
+  local saved_timeout = vim.o.timeout
+  local prefix = "<Plug>(AtomRepeatTestWait)"
+  vim.keymap.set("n", prefix, function()
+    vim.o.timeout = saved_timeout
+  end, { buffer = buf })
+  vim.keymap.set("n", prefix .. "<F6>", function() end, { buffer = buf })
+  vim.keymap.set("n", "p", function()
+    vim.o.timeout = false
+    vim.api.nvim_feedkeys("p", "n", false)
+    vim.api.nvim_feedkeys(vim.keycode(prefix), "m", false)
+  end, { buffer = buf })
+
+  local context = scope.resolve(buf)
+  local yank = store.add({ type = "operator", lhs = "yy" }, context)
+  local paste = store.add({ type = "mapping", lhs = "p" }, context)
+  store.set_last_group(context.id, { atoms = { yank, paste } })
+  vim.api.nvim_input(":AtomReplayLast<CR>")
+  sleep(100)
+  local finished = state.replay_depth == 0
+  if not finished then
+    vim.api.nvim_input("<Esc>")
+  end
+  truthy(finished, "replay should finish without a key to resolve the wait prefix")
+  eq({ "line", "line", "next" }, vim.api.nvim_buf_get_lines(buf, 0, -1, false))
+  eq(saved_timeout, vim.o.timeout, "the mapping should leave its waiting state")
+end)
+
+test("clearing history or saved recipes stops ReplayLast without choosing a saved fallback", function()
+  reset_history()
+  local buf = fresh_buffer({ "line" })
+  local context = scope.resolve(buf)
+  local saved = recipes.add(context, replay_group("yyp"))
+  store.ensure(context)
+  store.set_last_group(context.id, saved)
+  vim.cmd("AtomHistoryClear!")
+  eq(saved.id, recipes.first(context.id).id, "history clear keeps the saved recipe available for selection")
+  vim.api.nvim_input(":AtomReplayLast<CR>")
+  sleep(50)
+  eq({ "line" }, vim.api.nvim_buf_get_lines(buf, 0, -1, false))
+
+  vim.cmd("AtomReplaySelect")
+  vim.api.nvim_input("<CR>")
+  wait_for(function()
+    return store.get_last_group(context.id) ~= nil
+  end)
+  eq({ "line", "line" }, vim.api.nvim_buf_get_lines(buf, 0, -1, false))
+  vim.cmd("AtomReplayClear")
+  eq(nil, store.get_last_group(context.id), "recipe clear must remove the active selection as well")
+  vim.api.nvim_input(":AtomReplayLast<CR>")
+  sleep(50)
+  eq({ "line", "line" }, vim.api.nvim_buf_get_lines(buf, 0, -1, false))
 end)
 
 test("retrospective Insert capture keeps Lua prompt input across idle pauses", function()

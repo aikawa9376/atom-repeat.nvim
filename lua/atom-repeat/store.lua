@@ -138,6 +138,12 @@ function M.get_last_group(id)
   return bucket and bucket.last_group or nil
 end
 
+function M.clear_last_groups()
+  for _, bucket in pairs(state.buckets) do
+    bucket.last_group = nil
+  end
+end
+
 function M.clear(id)
   state.buckets[id] = nil
 end

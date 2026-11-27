@@ -1,4 +1,5 @@
 local input = require("atom-repeat.input")
+local scope = require("atom-repeat.scope")
 
 local M = {}
 
@@ -15,6 +16,8 @@ local warned = false
 local function keycode(keys)
   return vim.api.nvim_replace_termcodes(keys, true, false, true)
 end
+
+local recipe_mapping = keycode("<Plug>(AtomReplayLast)")
 
 local function notify_conflict()
   if warned then
@@ -244,6 +247,13 @@ end
 function M.invalidate()
   registration = nil
   automatic = nil
+end
+
+function M.clear_recipe(bucket_id)
+  if registration and registration.sequence == recipe_mapping
+    and (not bucket_id or scope.resolve(registration.buf).id == bucket_id) then
+    registration = nil
+  end
 end
 
 function M.setup()
