@@ -17,7 +17,24 @@ local function normal(keys)
   vim.cmd.normal({ bang = true, args = { keys } })
 end
 
+function M.status()
+  local active_register = vim.fn.reg_recording()
+  if active_register == "" then
+    return ""
+  end
+  if session and active_register == register then
+    if session.name then
+      return "REC " .. session.name:gsub("%%", "%%%%")
+    end
+    return "REC"
+  end
+  return "REC @" .. active_register
+end
+
 function M.start(name)
+  if name == "" then
+    name = nil
+  end
   if vim.fn.reg_recording() ~= "" or state.replay_depth > 0 then
     notify("finish the current recording or replay before starting a recording", vim.log.levels.WARN)
     return
@@ -51,6 +68,14 @@ function M.stop(discard)
   if not ok then
     current.stop_keys, current.discard = nil, nil
     notify("could not stop recording: " .. tostring(message), vim.log.levels.WARN)
+  end
+end
+
+function M.toggle(name)
+  if session then
+    M.stop(false)
+  else
+    M.start(name)
   end
 end
 
@@ -101,9 +126,12 @@ function M.on_leave(event)
     recorded_dots = dots,
   }
   local group = { atoms = { entry }, name = managed and managed.name, created_at = os.time(), repeatable = true }
-  if managed then
+  if group.name then
     group = recipes.add(context, group)
-    notify(group.name and ("saved recording " .. group.name) or "saved recording")
+    notify("saved recording " .. group.name)
+  elseif managed then
+    group.temporary = true
+    notify("recorded a temporary macro")
   end
   store.ensure(context)
   store.set_last_group(context.id, group)

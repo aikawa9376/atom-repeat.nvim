@@ -15,10 +15,36 @@ the newly recorded bytes, so you can reuse register `a` afterward.
 
 Use `:AtomRecordStart wrap` before editing and `:AtomRecordEnd` to save the
 recording as `wrap`. You can play it back at another cursor position with
-`:AtomReplay wrap` or `:AtomReplayLast`. Omit the name for an unnamed recipe.
+`:AtomReplay wrap` or `:AtomReplayLast`. Omit the name to keep the recording as
+the active macro for this session. Replay it with `:AtomReplayLast` or `.`.
 Names are single words and belong to the current project and branch.
 Recording the same name again replaces that recipe when you save it.
 `:AtomRecordCancel` discards the current recording.
+
+Bind one key to start and finish an Atom recording.
+
+```lua
+local atom_repeat = require("atom-repeat")
+vim.keymap.set("n", "<leader>qr", atom_repeat.toggle_recording)
+```
+
+`toggle_recording("wrap")` uses `wrap` as the recipe name when starting.
+
+Bind `@@` to replay the active temporary recording. It runs native `@@`
+when there is no active temporary recording.
+
+```lua
+vim.keymap.set("n", "@@", require("atom-repeat").replay_temporary)
+```
+
+Add this component to a lualine section such as `lualine_x`.
+
+```lua
+{ function() return require("atom-repeat").recording_status() end }
+```
+
+It shows `REC wrap` for a named recording, `REC` for a temporary recording,
+and `REC @a` for a native recording in register `a`.
 
 Recording starts at setup. The plugin keeps one row per completed action and
 can also repeat a mapped edit with `.` without explicit registration by the
@@ -154,7 +180,7 @@ Commands:
 | `:AtomHistory` | Open or refresh the current history snapshot |
 | `:AtomRemember [N]` | Save the last N history actions for dot repeat (default 1) |
 | `:AtomRecordStart [name]` | Start an explicit recording |
-| `:AtomRecordEnd` | Finish and save the recording |
+| `:AtomRecordEnd` | Finish and activate the recording |
 | `:AtomRecordCancel` | Discard the current recording |
 | `:AtomReplay {name}` | Run a named recipe at the cursor |
 | `:AtomReplayLast` | Replay the active group or latest captured edit once |

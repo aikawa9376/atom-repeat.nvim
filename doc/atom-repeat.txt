@@ -134,7 +134,27 @@ Use :AtomRecordStart wrap to start an explicit recording. Edit normally and
 run :AtomRecordEnd to save it. Run :AtomReplay wrap at another cursor position
 to execute it. Names are single words scoped to the recording's starting
 project and branch. Saving an existing name replaces its previous recipe.
-Omit the name to create an unnamed recipe.
+Omit the name to keep the current recording in memory for this session.
+Use |:AtomReplayLast| or |.| to replay it.
+
+Use toggle_recording() to bind start and finish to one key: >lua
+
+    vim.keymap.set("n", "<leader>qr", require("atom-repeat").toggle_recording)
+<
+Pass an optional name when starting a named recipe.
+
+Bind replay_temporary() to replay a temporary recording with @@: >lua
+
+    vim.keymap.set("n", "@@", require("atom-repeat").replay_temporary)
+<
+It uses native |@@| when there is no active temporary recording.
+
+Use the recording status as a lualine component: >lua
+
+    { function() return require("atom-repeat").recording_status() end }
+<
+It shows REC wrap for a named recording, REC for a temporary recording,
+and REC @a for a native recording in register a. It is hidden when idle.
 
 After a captured mapped edit, |.| runs the mapping again with its input. A
 count or register supplied to |.| overrides the original prefix. Ordinary edits
@@ -200,10 +220,11 @@ It is enabled by default. Disable it with `recipes.persist = false`.
                                                      *:AtomRecordStart*
 :AtomRecordStart [name]
                       Start a native key recording. Omit the name for an
-                      unnamed recipe.
+                      in-memory macro.
                                                        *:AtomRecordEnd*
-:AtomRecordEnd         Stop and save the recording for |:AtomReplayLast|
-                      or |:AtomReplaySelect|.
+:AtomRecordEnd         Stop the recording and make it active for
+                      |:AtomReplayLast|. Named recordings are saved in
+                      |:AtomReplaySelect|.
                                                     *:AtomRecordCancel*
 :AtomRecordCancel      Stop the recording and discard its captured keys.
                                                           *:AtomReplay*

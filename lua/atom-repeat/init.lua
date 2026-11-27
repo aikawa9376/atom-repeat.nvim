@@ -13,6 +13,8 @@ local ui = require("atom-repeat.ui")
 
 local M = {}
 
+M.recording_status = recording.status
+
 local function assert_initialized()
   if not state.initialized then
     error("atom-repeat: setup() must be called before using the plugin", 3)
@@ -61,7 +63,7 @@ local function replay_last(count, run, name)
           store.ensure(context)
           store.set_last_group(context.id, group)
         end
-      elseif group then
+      elseif group and not group.temporary then
         local saved = recipes.add(context, group)
         store.set_last_group(context.id, saved)
       end
@@ -97,7 +99,7 @@ local function install_interfaces()
   replace_command("AtomRecordEnd", function()
     capture.ignore_next()
     recording.stop(false)
-  end, { desc = "Finish and save the recording" })
+  end, { desc = "Finish and activate the recording" })
   replace_command("AtomRecordCancel", function()
     capture.ignore_next()
     recording.stop(true)
@@ -238,6 +240,28 @@ function M.replay_last()
   assert_initialized()
   capture.ignore_next()
   replay_last(1, replay.now)
+end
+
+---Replay the active temporary recording, with native @@ as the fallback.
+function M.replay_temporary()
+  assert_initialized()
+  local count = vim.v.count
+  local group = store.get_last_group(scope.resolve().id)
+  if group and group.temporary then
+    capture.ignore_next()
+    replay_last(vim.v.count1, replay.now)
+  else
+    local prefix = count > 0 and tostring(count) or ""
+    vim.api.nvim_feedkeys(prefix .. "@@", "ni", false)
+  end
+end
+
+---Start an Atom recording or finish the active Atom recording.
+---@param name? string Recipe name to use when starting.
+function M.toggle_recording(name)
+  assert_initialized()
+  capture.ignore_next()
+  recording.toggle(name)
 end
 
 function M.select()
