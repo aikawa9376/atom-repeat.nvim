@@ -124,8 +124,11 @@ Plug target: >lua
 
     vim.keymap.set("n", "g.", "<Plug>(AtomReplayLast)")
 <
-The Plug mapping honors |v:count1|. :AtomReplayLast runs the active group once.
-To activate a recipe saved in an earlier session, run it from |:AtomReplaySelect|.
+The Plug mapping honors |v:count1|. :AtomReplayLast runs the active group once,
+or repeats the latest captured edit when there is no active group. For example,
+type ciwtest<Esc>, move to another word, and run :AtomReplayLast.
+Use |:AtomRemember| to save history actions for |:AtomReplaySelect|.
+Running a saved recipe from the selector makes it the active group.
 
 After a captured mapped edit, |.| runs the mapping again with its input. A
 count or register supplied to |.| overrides the original prefix. Ordinary edits
@@ -187,7 +190,7 @@ It is enabled by default. Disable it with `recipes.persist = false`.
                       |:AtomReplayLast|. Execution starts on replay.
 
                                                       *:AtomReplayLast*
-:AtomReplayLast        Replay the current bucket's active group once.
+:AtomReplayLast        Replay the active group or latest captured edit once.
 
                                                     *:AtomReplaySelect*
 :AtomReplaySelect      Open the current bucket's saved recipe selector.

@@ -90,9 +90,13 @@ vim.keymap.set("n", "g.", "<Plug>(AtomReplayLast)")
 ```
 
 Counts are supported by the `<Plug>` mapping, so `3g.` replays the last group
-three times. `:AtomReplayLast` runs the active group once. To replay a recipe
-saved in an earlier session, choose it with `:AtomReplaySelect`. Running it
-there makes it the active group.
+three times. `:AtomReplayLast` runs the active group once, or repeats the
+latest captured edit when there is no active group. For example, type
+`ciwtest<Esc>`, move to another word, and run `:AtomReplayLast`.
+
+`:AtomReplaySelect` lists saved recipes. Use `:AtomRemember 1` to save the latest
+history action. Running a saved recipe from the selector makes it the active
+group.
 
 Every successfully replayed history recipe is also saved in a per-project,
 per-branch MRU library. Open it with `:AtomReplaySelect`; the newest recipe is
@@ -141,7 +145,7 @@ Commands:
 | --- | --- |
 | `:AtomHistory` | Open or refresh the current history snapshot |
 | `:AtomRemember [N]` | Save the last N history actions for dot repeat (default 1) |
-| `:AtomReplayLast` | Replay the active group for the current project/branch once |
+| `:AtomReplayLast` | Replay the active group or latest captured edit once |
 | `:AtomReplaySelect` | Select and execute a saved replay recipe |
 | `:AtomReplayClear` | Clear the saved recipes and active group for the current project/branch |
 | `:AtomReplayClear!` | Clear all saved recipes and active groups |

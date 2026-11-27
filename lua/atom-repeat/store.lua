@@ -138,6 +138,20 @@ function M.get_last_group(id)
   return bucket and bucket.last_group or nil
 end
 
+function M.get_last_edit(id)
+  local bucket = M.get(id, false)
+  if not bucket then
+    return
+  end
+  for index = #bucket.entries, 1, -1 do
+    local entry = bucket.entries[index]
+    local atom = entry.atom
+    if atom.changed and atom.cmd ~= "u" and atom.cmd ~= "U" and atom.cmd ~= "<C-R>" then
+      return entry
+    end
+  end
+end
+
 function M.clear_last_groups()
   for _, bucket in pairs(state.buckets) do
     bucket.last_group = nil

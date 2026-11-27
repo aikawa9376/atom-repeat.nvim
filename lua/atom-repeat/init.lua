@@ -31,15 +31,25 @@ local function replay_last(count, run)
   assert_initialized()
   local context = scope.resolve(vim.api.nvim_get_current_buf())
   local group = store.get_last_group(context.id)
-  if not group then
-    notify("no active replay group. Use :AtomRemember or :AtomReplaySelect", vim.log.levels.WARN)
-    return
+  local entries
+  if group then
+    entries = group.atoms
+  else
+    if input.pending() and not replay.flush() then
+      return
+    end
+    local edit = store.get_last_edit(context.id)
+    if not edit then
+      notify("no recent edit or active replay group for this project and branch", vim.log.levels.WARN)
+      return
+    end
+    entries = { edit }
   end
-  run(group.atoms, count, function(ok, replay_error)
+  run(entries, count, function(ok, replay_error)
     if ok then
-      if group.id then
+      if group and group.id then
         recipes.touch(context.id, group.id)
-      else
+      elseif group then
         local saved = recipes.add(context, group)
         store.set_last_group(context.id, saved)
       end

@@ -698,6 +698,29 @@ test("AtomReplayLast runs keys queued by a replayed mapping without more input",
   eq(1, #current_bucket().entries, "the replay command should stay out of history")
 end)
 
+test("AtomReplayLast repeats a recent change without selecting or saving a recipe", function()
+  reset_history()
+  local buf = fresh_buffer({ "one", "two", "three" })
+  local context = scope.resolve(buf)
+  local saved = recipes.add(context, replay_group("yyp"))
+
+  vim.api.nvim_input("ciwtest<Esc>j0:AtomReplayLast<CR>")
+  wait_for(function()
+    return vim.api.nvim_buf_get_lines(buf, 1, 2, false)[1] == "test"
+  end, "a change followed by cursor movement should replay without a saved selection")
+  eq({ "test", "test", "three" }, vim.api.nvim_buf_get_lines(buf, 0, -1, false))
+  eq(nil, store.get_last_group(context.id), "a replay of the latest edit should not pin it")
+  eq({ saved.id }, vim.tbl_map(function(recipe)
+    return recipe.id
+  end, recipes.get_bucket(context.id).recipes), "the saved recipe library should remain separate")
+
+  vim.api.nvim_input("ciwnew<Esc>j0:AtomReplayLast<CR>")
+  wait_for(function()
+    return vim.api.nvim_buf_get_lines(buf, 2, 3, false)[1] == "new"
+  end, "the next edit should immediately become the replay target")
+  eq({ "test", "new", "new" }, vim.api.nvim_buf_get_lines(buf, 0, -1, false))
+end)
+
 test("AtomReplayLast finishes a plugin mapping with a pending prefix and no timeout", function()
   reset_history()
   local buf = fresh_buffer({ "line", "next" })
@@ -728,7 +751,7 @@ test("AtomReplayLast finishes a plugin mapping with a pending prefix and no time
   eq(saved_timeout, vim.o.timeout, "the mapping should leave its waiting state")
 end)
 
-test("clearing history or saved recipes stops ReplayLast without choosing a saved fallback", function()
+test("clear commands remove the active group without reviving a saved recipe", function()
   reset_history()
   local buf = fresh_buffer({ "line" })
   local context = scope.resolve(buf)
