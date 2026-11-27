@@ -3,6 +3,7 @@ local state = require("atom-repeat.state")
 local store = require("atom-repeat.store")
 local dot = require("atom-repeat.dot")
 local input = require("atom-repeat.input")
+local recording = require("atom-repeat.recording")
 
 local M = {}
 
@@ -77,30 +78,7 @@ function M.setup()
     end
   end)
   vim.api.nvim_create_autocmd("RecordingEnter", { group = group, callback = dot.start_recording })
-  vim.api.nvim_create_autocmd("RecordingLeave", {
-    group = group,
-    callback = function(event)
-      local dots = dot.finish_recording()
-      local contents = vim.v.event.regcontents
-      if state.replay_depth > 0 or is_owned_buffer(event.buf) or not contents or contents == "" then
-        return
-      end
-      -- Register contents have unescaped UTF-8 bytes. Convert through key
-      -- notation to recover the internal bytes accepted by nvim_feedkeys().
-      local keys = vim.keycode(vim.fn.keytrans(contents))
-      local context = scope.resolve(event.buf)
-      local entry = {
-        atom = { type = "macro", lhs = keys },
-        context = context,
-        replay_kind = "lhs",
-        replay_value = keys,
-        recorded_dots = dots,
-      }
-      store.ensure(context)
-      store.set_last_group(context.id, { atoms = { entry }, created_at = os.time(), repeatable = true })
-      dot.set("<Plug>(AtomReplayLast)", { count = 1 })
-    end,
-  })
+  vim.api.nvim_create_autocmd("RecordingLeave", { group = group, callback = recording.on_leave })
   vim.api.nvim_create_autocmd("CmdAtom", {
     group = group,
     callback = function(event)

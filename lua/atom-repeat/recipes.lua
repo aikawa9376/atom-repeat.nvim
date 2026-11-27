@@ -30,6 +30,9 @@ local function valid_recipe(recipe)
   if type(recipe) ~= "table" or type(recipe.id) ~= "number" or type(recipe.atoms) ~= "table" or #recipe.atoms == 0 then
     return false
   end
+  if recipe.name ~= nil and type(recipe.name) ~= "string" then
+    return false
+  end
   for _, entry in ipairs(recipe.atoms) do
     if not valid_atom(entry) then
       return false
@@ -130,9 +133,18 @@ end
 
 local function trim(bucket)
   local changed = false
-  while #bucket.recipes > state.config.recipes.max_items do
-    table.remove(bucket.recipes)
-    changed = true
+  local unnamed = 0
+  local index = 1
+  while index <= #bucket.recipes do
+    if bucket.recipes[index].name then
+      index = index + 1
+    elseif unnamed < state.config.recipes.max_items then
+      unnamed = unnamed + 1
+      index = index + 1
+    else
+      table.remove(bucket.recipes, index)
+      changed = true
+    end
   end
   return changed
 end
@@ -204,7 +216,12 @@ function M.add(context, group)
   local bucket = bucket_for(context, true)
   local recipe
   for index, candidate in ipairs(bucket.recipes) do
-    if same_recipe(candidate, group) then
+    if group.name and candidate.name == group.name then
+      recipe = vim.deepcopy(group)
+      recipe.id = candidate.id
+      table.remove(bucket.recipes, index)
+      break
+    elseif not group.name and not candidate.name and same_recipe(candidate, group) then
       recipe = table.remove(bucket.recipes, index)
       break
     end
@@ -219,6 +236,15 @@ function M.add(context, group)
   trim(bucket)
   M.save()
   return recipe
+end
+
+function M.find(id, name)
+  local bucket = state.recipe_buckets[id]
+  for _, recipe in ipairs(bucket and bucket.recipes or {}) do
+    if recipe.name == name then
+      return recipe
+    end
+  end
 end
 
 function M.get_bucket(id)

@@ -4,6 +4,7 @@ local dot = require("atom-repeat.dot")
 local input = require("atom-repeat.input")
 local recipe_ui = require("atom-repeat.recipe_ui")
 local recipes = require("atom-repeat.recipes")
+local recording = require("atom-repeat.recording")
 local replay = require("atom-repeat.replay")
 local scope = require("atom-repeat.scope")
 local state = require("atom-repeat.state")
@@ -27,10 +28,17 @@ local function owned_action(callback)
   callback()
 end
 
-local function replay_last(count, run)
+local function replay_last(count, run, name)
   assert_initialized()
   local context = scope.resolve(vim.api.nvim_get_current_buf())
   local group = store.get_last_group(context.id)
+  if name then
+    group = recipes.find(context.id, name)
+    if not group then
+      notify("no saved recipe named " .. name, vim.log.levels.WARN)
+      return
+    end
+  end
   local entries
   if group then
     entries = group.atoms
@@ -49,6 +57,10 @@ local function replay_last(count, run)
     if ok then
       if group and group.id then
         recipes.touch(context.id, group.id)
+        if name then
+          store.ensure(context)
+          store.set_last_group(context.id, group)
+        end
       elseif group then
         local saved = recipes.add(context, group)
         store.set_last_group(context.id, saved)
@@ -78,6 +90,35 @@ local function install_interfaces()
     capture.ignore_next()
     replay_last(1, replay.run)
   end, { desc = "Replay the last atom group" })
+  replace_command("AtomRecordStart", function(command)
+    capture.ignore_next()
+    recording.start(command.args ~= "" and command.args or nil)
+  end, { nargs = "?", desc = "Start recording a replay recipe" })
+  replace_command("AtomRecordEnd", function()
+    capture.ignore_next()
+    recording.stop(false)
+  end, { desc = "Finish and save the recording" })
+  replace_command("AtomRecordCancel", function()
+    capture.ignore_next()
+    recording.stop(true)
+  end, { desc = "Discard the current recording" })
+  replace_command("AtomReplay", function(command)
+    capture.ignore_next()
+    replay_last(1, replay.run, command.args)
+  end, {
+    nargs = 1,
+    complete = function(prefix)
+      local bucket = recipes.get_bucket(scope.resolve().id)
+      local names = {}
+      for _, recipe in ipairs(bucket and bucket.recipes or {}) do
+        if recipe.name and vim.startswith(recipe.name, prefix) then
+          names[#names + 1] = recipe.name
+        end
+      end
+      return names
+    end,
+    desc = "Replay a named recipe",
+  })
   replace_command("AtomReplaySelect", function()
     M.select()
   end, { desc = "Select a saved atom replay recipe" })

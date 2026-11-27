@@ -1,6 +1,10 @@
 :AtomHistory	atom-repeat.txt	/*:AtomHistory*
 :AtomHistoryClear	atom-repeat.txt	/*:AtomHistoryClear*
+:AtomRecordCancel	atom-repeat.txt	/*:AtomRecordCancel*
+:AtomRecordEnd	atom-repeat.txt	/*:AtomRecordEnd*
+:AtomRecordStart	atom-repeat.txt	/*:AtomRecordStart*
 :AtomRemember	atom-repeat.txt	/*:AtomRemember*
+:AtomReplay	atom-repeat.txt	/*:AtomReplay*
 :AtomReplayClear	atom-repeat.txt	/*:AtomReplayClear*
 :AtomReplayLast	atom-repeat.txt	/*:AtomReplayLast*
 :AtomReplaySelect	atom-repeat.txt	/*:AtomReplaySelect*

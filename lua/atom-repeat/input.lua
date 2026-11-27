@@ -213,6 +213,24 @@ local function typed_keys(start, last, prefix)
   return raw
 end
 
+function M.command_keys()
+  local last = #chunks
+  if last < first or vim.fn.state("S") == "" then
+    return ""
+  end
+  if chunks[last].mode == "c" and (chunks[last].key == "\r" or chunks[last].key == "\n") then
+    local start = last
+    while start > first and chunks[start].mode == "c" do
+      start = start - 1
+    end
+    return typed_keys(start, last, "")
+  end
+  if chunks[last].mode == "n" and chunks[last].mapped then
+    return typed_keys(last, last, "")
+  end
+  return ""
+end
+
 local function is_mapped_exit(operator)
   local exit = chunks[operator.last]
   return operator.name == "c" and exit.mapped and exit.key == "\027"

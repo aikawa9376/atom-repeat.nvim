@@ -77,7 +77,7 @@ local function format_recipe(recipe)
   local id = ("R%-5d"):format(recipe.id)
   local timestamp = os.date("%Y-%m-%d %H:%M", recipe.created_at or recipe.last_used_at or 0)
   local count = ("%3d atoms"):format(#recipe.atoms)
-  local text = truncate(preview(recipe), 72)
+  local text = truncate((recipe.name and recipe.name .. "  " or "") .. preview(recipe), 72)
   local line = id .. "  " .. timestamp .. "  " .. count .. "  " .. text
   local time_start = #id + 2
   local count_start = time_start + #timestamp + 2
@@ -207,10 +207,23 @@ local function paste(after, first, last)
   end
 
   local inserted = {}
+  local names = {}
+  for _, recipe in ipairs(session.items) do
+    if recipe.name then
+      names[recipe.name] = true
+    end
+  end
   for _ = 1, vim.v.count1 do
     for _, recipe in ipairs(session.entry_register) do
       local copy = vim.deepcopy(recipe)
       copy.id = recipes.allocate_id()
+      if copy.name then
+        if names[copy.name] then
+          copy.name = nil
+        else
+          names[copy.name] = true
+        end
+      end
       inserted[#inserted + 1] = copy
     end
   end

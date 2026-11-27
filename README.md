@@ -13,6 +13,13 @@ If you explicitly record with `qa … q`, finishing the recording also makes
 those keystrokes available to `.` and `:AtomReplayLast`. The plugin snapshots
 the newly recorded bytes, so you can reuse register `a` afterward.
 
+Use `:AtomRecordStart wrap` before editing and `:AtomRecordEnd` to save the
+recording as `wrap`. You can play it back at another cursor position with
+`:AtomReplay wrap` or `:AtomReplayLast`. Omit the name for an unnamed recipe.
+Names are single words and belong to the current project and branch.
+Recording the same name again replaces that recipe when you save it.
+`:AtomRecordCancel` discards the current recording.
+
 Recording starts at setup. The plugin keeps one row per completed action and
 can also repeat a mapped edit with `.` without explicit registration by the
 other plugin.
@@ -70,6 +77,7 @@ The snapshot can be edited with a history-local Vim-style register:
 | `dd` / Visual `d` | Cut entries from the replay recipe |
 | `yy` / Visual `y` | Copy entries |
 | `p` / `P` | Paste entries after / before the cursor |
+| `s` / Visual `s` | Save the current row or selection as a recipe |
 
 Counts are supported, for example `3dd` and `2p`. These edits affect only the
 open replay recipe and never touch Vim registers or the stored chronological
@@ -114,7 +122,7 @@ require("atom-repeat").setup({
   -- Keep all motions. Use 3 for the first three per run or 0 to omit them.
   max_consecutive_motions = false,
   recipes = {
-    max_items = 20, -- saved recipes per project/branch
+    max_items = 20, -- unnamed recipes per project/branch
     persist = true,
     -- path = vim.fs.joinpath(vim.fn.stdpath("state"),
     --   "atom-repeat", "recipes.mpack"),
@@ -145,6 +153,10 @@ Commands:
 | --- | --- |
 | `:AtomHistory` | Open or refresh the current history snapshot |
 | `:AtomRemember [N]` | Save the last N history actions for dot repeat (default 1) |
+| `:AtomRecordStart [name]` | Start an explicit recording |
+| `:AtomRecordEnd` | Finish and save the recording |
+| `:AtomRecordCancel` | Discard the current recording |
+| `:AtomReplay {name}` | Run a named recipe at the cursor |
 | `:AtomReplayLast` | Replay the active group or latest captured edit once |
 | `:AtomReplaySelect` | Select and execute a saved replay recipe |
 | `:AtomReplayClear` | Clear the saved recipes and active group for the current project/branch |

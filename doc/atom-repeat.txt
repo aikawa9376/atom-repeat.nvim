@@ -55,7 +55,7 @@ of h, j, k, l, w, or b. The default false keeps all motions. Use 0 to omit them.
 single-key callback mapping on one of those LHS keys also counts as navigation.
 A different Atom resets the run, and a counted command such as 3j is one Atom.
 `ui.height` is the bottom history split height.
-`recipes.max_items` is the saved-recipe limit for each project/branch.
+`recipes.max_items` limits unnamed recipes for each project/branch.
 `recipes.persist` enables MessagePack persistence. `recipes.path` defaults to
 `stdpath("state")/atom-repeat/recipes.mpack`.
 
@@ -130,6 +130,12 @@ type ciwtest<Esc>, move to another word, and run :AtomReplayLast.
 Use |:AtomRemember| to save history actions for |:AtomReplaySelect|.
 Running a saved recipe from the selector makes it the active group.
 
+Use :AtomRecordStart wrap to start an explicit recording. Edit normally and
+run :AtomRecordEnd to save it. Run :AtomReplay wrap at another cursor position
+to execute it. Names are single words scoped to the recording's starting
+project and branch. Saving an existing name replaces its previous recipe.
+Omit the name to create an unnamed recipe.
+
 After a captured mapped edit, |.| runs the mapping again with its input. A
 count or register supplied to |.| overrides the original prefix. Ordinary edits
 use native dot. After a recipe replay succeeds, |.| repeats the recipe and a
@@ -158,8 +164,10 @@ existing dot mappings are preserved.
 5. RECIPE LIBRARY                                        *atom-repeat-recipes*
 
 Every successful replay from |:AtomHistory| is saved in a project/branch MRU
-library. Identical recipes are moved to the front instead of duplicated. The
-library retains `recipes.max_items` recipes per bucket.
+library. From the history window, s saves the current row or Visual selection
+without executing it. Identical unnamed recipes are moved to the front. The
+library retains `recipes.max_items` unnamed recipes per bucket. Named recipes
+remain available until deleted.
 
 Use |:AtomReplaySelect| to open the current bucket. Rows show a persistent ID,
 creation time, Atom count, and a preview. Selector mappings:
@@ -188,6 +196,18 @@ It is enabled by default. Disable it with `recipes.persist = false`.
                                                         *:AtomRemember*
 :AtomRemember [N]      Save the last N actions (default 1) for |.| and
                       |:AtomReplayLast|. Execution starts on replay.
+
+                                                     *:AtomRecordStart*
+:AtomRecordStart [name]
+                      Start a native key recording. Omit the name for an
+                      unnamed recipe.
+                                                       *:AtomRecordEnd*
+:AtomRecordEnd         Stop and save the recording for |:AtomReplayLast|
+                      or |:AtomReplaySelect|.
+                                                    *:AtomRecordCancel*
+:AtomRecordCancel      Stop the recording and discard its captured keys.
+                                                          *:AtomReplay*
+:AtomReplay {name}     Run a named recipe in the current project and branch.
 
                                                       *:AtomReplayLast*
 :AtomReplayLast        Replay the active group or latest captured edit once.

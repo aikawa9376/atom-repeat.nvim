@@ -197,7 +197,7 @@ local function normalize_mode()
   end
 end
 
-local function replay_range(first, last)
+local function replay_range(first, last, save_only)
   local session = state.ui
   if not session then
     return
@@ -239,11 +239,20 @@ local function replay_range(first, last)
   normalize_mode()
   vim.api.nvim_set_current_win(origin_win)
   vim.api.nvim_win_set_cursor(origin_win, { position[1] + 1, position[2] })
+  local function save()
+    local saved = recipes.add(recipe_context, group)
+    store.ensure(recipe_context)
+    store.set_last_group(bucket_id, saved)
+    dot.set("<Plug>(AtomReplayLast)", { count = 1 })
+  end
+  if save_only then
+    save()
+    notify("saved selected actions")
+    return
+  end
   replay.run(group.atoms, 1, function(ok, replay_error)
     if ok then
-      local saved = recipes.add(recipe_context, group)
-      store.set_last_group(bucket_id, saved)
-      dot.set("<Plug>(AtomReplayLast)", { count = 1 })
+      save()
     else
       notify("replay stopped: " .. tostring(replay_error), vim.log.levels.ERROR)
     end
@@ -339,6 +348,15 @@ local function install_buffer_maps(bufnr)
     capture.ignore_next()
     replay_range(anchor, cursor)
   end, { buffer = bufnr, silent = true, nowait = true, desc = "Replay selected atoms" })
+  vim.keymap.set("n", "s", function()
+    capture.ignore_next()
+    local row = vim.api.nvim_win_get_cursor(0)[1]
+    replay_range(row, row, true)
+  end, { buffer = bufnr, silent = true, nowait = true, desc = "Save atom without replaying" })
+  vim.keymap.set("x", "s", function()
+    capture.ignore_next()
+    replay_range(vim.fn.line("v"), vim.fn.line("."), true)
+  end, { buffer = bufnr, silent = true, nowait = true, desc = "Save selected atoms without replaying" })
   vim.keymap.set("n", "dd", function()
     local cursor = vim.api.nvim_win_get_cursor(0)[1]
     capture.ignore_next()
