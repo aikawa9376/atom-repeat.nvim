@@ -1,5 +1,6 @@
 local state = require("atom-repeat.state")
 local input = require("atom-repeat.input")
+local repeat_filter = require("atom-repeat.repeat_filter")
 
 local M = {}
 
@@ -9,7 +10,7 @@ local M = {}
 ---@field context table
 ---@field replay_kind 'keys'|'lhs'|'unsupported'
 ---@field replay_value? string
----@field recorded_dots? (string|false)[] Inputs of automatic dot repeats within a recorded macro.
+---@field recorded_dots? (string|{ resolved: string }|boolean)[] Dot expansions, native fallback (false), or a skipped dot (true).
 
 ---@class ReplayGroup
 ---@field atoms AtomHistoryEntry[]
@@ -83,11 +84,16 @@ function M.ensure(context)
   return bucket
 end
 
-function M.add(atom, context, typed)
+function M.add(atom, context, typed, repeated)
   local bucket = M.ensure(context)
   state.sequence = state.sequence + 1
   local copied = vim.deepcopy(atom)
-  local kind, value = replay_kind(copied, typed)
+  local kind, value
+  if repeated then
+    kind, value = repeated.replay_kind, repeated.replay_value
+  else
+    kind, value = replay_kind(copied, typed)
+  end
   local entry = {
     seq = state.sequence,
     atom = copied,
@@ -145,8 +151,7 @@ function M.get_last_edit(id)
   end
   for index = #bucket.entries, 1, -1 do
     local entry = bucket.entries[index]
-    local atom = entry.atom
-    if atom.changed and atom.cmd ~= "u" and atom.cmd ~= "U" and atom.cmd ~= "<C-R>" then
+    if entry.atom.changed and not repeat_filter.skip(entry) then
       return entry
     end
   end

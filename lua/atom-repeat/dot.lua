@@ -1,12 +1,15 @@
 local input = require("atom-repeat.input")
+local repeat_filter = require("atom-repeat.repeat_filter")
 local scope = require("atom-repeat.scope")
+local state = require("atom-repeat.state")
 
 local M = {}
 
 local plug = "<Plug>(AtomRepeatDot)"
 local multicursor = vim.api.nvim_create_namespace("nvim.multicursor")
 local registration
-local automatic
+local last_edit
+local preceding_delete
 local recording_dots
 local playback_dots
 local backend = "uninitialized"
@@ -45,12 +48,12 @@ local function default_register()
   return '"'
 end
 
-local function valid_automatic()
-  if not automatic or not vim.api.nvim_buf_is_loaded(automatic.buf)
-    or vim.api.nvim_buf_get_changedtick(automatic.buf) ~= automatic.changedtick then
+local function valid_edit(edit)
+  if not vim.api.nvim_buf_is_loaded(edit.buf)
+    or vim.api.nvim_buf_get_changedtick(edit.buf) ~= edit.changedtick then
     return false
   end
-  return automatic.undoseq == vim.api.nvim_buf_call(automatic.buf, function()
+  return edit.undoseq == vim.api.nvim_buf_call(edit.buf, function()
     return vim.fn.undotree().seq_cur
   end)
 end
@@ -75,29 +78,35 @@ local function native_dot(count, register)
 end
 
 local function repeat_edit(count, register, chunk, recorded_index)
-  if not valid_automatic() then
+  local edit = last_edit
+  local bufnr = vim.api.nvim_get_current_buf()
+  if not edit or edit.native or not valid_edit(edit) or (not edit.entry and edit.buf ~= bufnr) then
     if chunk and chunk.typed == "." then
       chunk.ignored = false
     end
     native_dot(count, register)
     return
   end
-  local edit = automatic
-  local bufnr = vim.api.nvim_get_current_buf()
+  if not edit.entry then
+    if recorded_index and recording_dots then
+      recording_dots[recorded_index] = true
+    end
+    return
+  end
   local previous_count, previous_register, body = input.prefix(edit.entry.replay_value)
   local selected_register = register or previous_register
   local keys = (selected_register and '"' .. selected_register or "")
     .. (count > 0 and tostring(count) or previous_count)
     .. body
-  local entry = { replay_kind = "lhs", replay_value = keys, seq = edit.entry.seq }
+  local entry = { replay_kind = edit.entry.replay_kind, replay_value = keys, seq = edit.entry.seq }
   require("atom-repeat.replay").now({ entry }, 1, function(ok, message)
-    if ok and automatic == edit and vim.api.nvim_get_current_buf() == bufnr then
+    if ok and last_edit == edit and vim.api.nvim_get_current_buf() == bufnr then
       if chunk then
         chunk.ignored = false
-        chunk.repeated = keys
+        chunk.repeated = entry
       end
       if recorded_index and recording_dots then
-        recording_dots[recorded_index] = keys
+        recording_dots[recorded_index] = entry.replay_kind == "keys" and { resolved = keys } or keys
       end
       edit.entry = entry
       edit.buf = bufnr
@@ -115,12 +124,17 @@ function M.run(count)
   local requested_register = vim.v.register
   local register = requested_register ~= default_register() and requested_register or nil
   local buf = vim.api.nvim_get_current_buf()
-  if require("atom-repeat.state").replay_depth > 0 then
+  if state.replay_depth > 0 then
     if playback_dots then
       playback_dots.index = playback_dots.index + 1
-      local keys = playback_dots.keys[playback_dots.index]
-      if keys then
-        vim.api.nvim_feedkeys(keys, "mi", false)
+      local recorded = playback_dots.keys[playback_dots.index]
+      if recorded == true then
+        return
+      elseif type(recorded) == "table" then
+        vim.api.nvim_feedkeys(recorded.resolved, "ni", false)
+        return
+      elseif recorded then
+        vim.api.nvim_feedkeys(recorded, "mi", false)
         return
       end
     end
@@ -138,7 +152,9 @@ function M.run(count)
     if #vim.api.nvim_buf_get_extmarks(buf, multicursor, 0, -1, { limit = 1 }) > 0 then
       native_dot(count, register)
     else
-      if input.pending(automatic == nil) then
+      local config = state.config and state.config.dot
+      local needs_native_atoms = config and (config.join_delete_insert or next(config.ignore) ~= nil)
+      if input.pending(not needs_native_atoms and (not last_edit or last_edit.native)) then
         if not require("atom-repeat.replay").flush() then
           return
         end
@@ -157,32 +173,71 @@ function M.run(count)
   vim.api.nvim_feedkeys(prefix .. registration.sequence, "mi", false)
 end
 
+function M.break_join()
+  preceding_delete = nil
+end
+
+local function is_delete(atom, body)
+  -- A Lua dd mapping can use :normal! and leave no resolved operator.
+  return atom.operator == "d"
+    or (atom.type == "mapping" and atom.keys == nil and (body == "dd" or body == "D"))
+end
+
+local function is_i_insert(atom, body)
+  local insert = atom.atoms and atom.atoms[#atom.atoms] or atom
+  -- An i mapping may enter Insert with cc on an empty line.
+  return insert.type == "insert" and (insert.cmd == "i" or vim.startswith(body, "i"))
+end
+
 function M.observe(bufnr, entry, mapped)
   local atom = entry.atom
+  local previous = preceding_delete
+  M.break_join()
   if not atom.changed then
     return
   end
-  if atom.cmd == "u" or atom.cmd == "U" or atom.cmd == "<C-R>" then
-    if automatic and automatic.buf == bufnr then
-      automatic.changedtick = vim.api.nvim_buf_get_changedtick(bufnr)
-      automatic.undoseq = atom.undoseq
+  local changedtick = vim.api.nvim_buf_get_changedtick(bufnr)
+  local skip = repeat_filter.skip(entry)
+  if skip then
+    if skip == "ignored" then
+      if not last_edit or last_edit.buf ~= bufnr then
+        last_edit = { buf = bufnr }
+      end
+      -- An ignored edit can also replace Neovim's own dot target.
+      last_edit.native = false
+    end
+    if last_edit and last_edit.buf == bufnr then
+      last_edit.changedtick = changedtick
+      last_edit.undoseq = atom.undoseq
     end
     return
   end
   -- Operator-pending expression mappings can consume their text object
   -- before on_key sees it. Re-enter the LHS when the motion ran an Ex command.
   local mapped_operator = atom.operator and atom.cmd == ":" and atom.type == "operator"
-  if entry.replay_kind == "lhs"
-    and (mapped or mapped_operator or atom.keys == nil or atom.operator == "g@" or atom.type == "excmd") then
-    automatic = {
-      entry = entry,
-      buf = bufnr,
-      changedtick = vim.api.nvim_buf_get_changedtick(bufnr),
-      undoseq = atom.undoseq,
-    }
-  else
-    automatic = nil
+  local use_lhs = entry.replay_kind == "lhs"
+    and (mapped or mapped_operator or atom.keys == nil or atom.operator == "g@" or atom.type == "excmd")
+
+  if state.config.dot.join_delete_insert and entry.replay_kind == "lhs" then
+    local body = repeat_filter.body(entry)
+    if is_delete(atom, body) then
+      preceding_delete = { buf = bufnr, entry = entry }
+    elseif previous and previous.buf == bufnr and is_i_insert(atom, body) then
+      entry = {
+        replay_kind = "lhs",
+        replay_value = previous.entry.replay_value .. entry.replay_value,
+        seq = entry.seq,
+      }
+      use_lhs = true
+    end
   end
+  last_edit = {
+    entry = entry.replay_kind ~= "unsupported" and entry or nil,
+    buf = bufnr,
+    changedtick = changedtick,
+    undoseq = atom.undoseq,
+    native = not use_lhs,
+  }
 end
 
 ---@class AtomRepeatDotOptions
@@ -250,7 +305,8 @@ end
 
 function M.invalidate()
   registration = nil
-  automatic = nil
+  last_edit = nil
+  M.break_join()
 end
 
 function M.clear_recipe(bucket_id)

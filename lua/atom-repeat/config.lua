@@ -8,11 +8,16 @@ local M = {}
 ---@field persist boolean
 ---@field path string
 
+---@class AtomRepeatDotConfig
+---@field ignore table<string, true>
+---@field join_delete_insert boolean
+
 ---@class AtomRepeatConfig
 ---@field capture_lua_prompts boolean
 ---@field history_size integer
 ---@field max_buckets integer
 ---@field max_consecutive_motions integer|false
+---@field dot AtomRepeatDotConfig
 ---@field recipes AtomRepeatRecipeConfig
 ---@field ui AtomRepeatUIConfig
 
@@ -22,6 +27,10 @@ local defaults = {
   history_size = 500,
   max_buckets = 20,
   max_consecutive_motions = false,
+  dot = {
+    ignore = {},
+    join_delete_insert = false,
+  },
   recipes = {
     max_items = 20,
     persist = true,
@@ -59,6 +68,20 @@ local function motion_limit(value)
   end
 end
 
+local function key_set(value, path)
+  if not vim.islist(value) then
+    fail(path, "expected a list of key sequences")
+  end
+  local keys = {}
+  for _, sequence in ipairs(value) do
+    if type(sequence) ~= "string" or sequence == "" then
+      fail(path, "expected non-empty key sequences")
+    end
+    keys[vim.fn.keytrans(vim.keycode(sequence))] = true
+  end
+  return keys
+end
+
 ---@param opts? table
 ---@return AtomRepeatConfig
 function M.resolve(opts)
@@ -74,9 +97,16 @@ function M.resolve(opts)
     history_size = true,
     max_buckets = true,
     max_consecutive_motions = true,
+    dot = true,
     recipes = true,
     ui = true,
   }, "opts")
+  if opts.dot ~= nil then
+    if type(opts.dot) ~= "table" then
+      fail("opts.dot", "expected a table")
+    end
+    validate_keys(opts.dot, { ignore = true, join_delete_insert = true }, "opts.dot")
+  end
   if opts.recipes ~= nil then
     if type(opts.recipes) ~= "table" then
       fail("opts.recipes", "expected a table")
@@ -97,6 +127,10 @@ function M.resolve(opts)
   positive_integer(config.history_size, "opts.history_size")
   positive_integer(config.max_buckets, "opts.max_buckets")
   motion_limit(config.max_consecutive_motions)
+  config.dot.ignore = key_set(config.dot.ignore, "opts.dot.ignore")
+  if type(config.dot.join_delete_insert) ~= "boolean" then
+    fail("opts.dot.join_delete_insert", "expected a boolean")
+  end
   positive_integer(config.recipes.max_items, "opts.recipes.max_items")
   if type(config.recipes.persist) ~= "boolean" then
     fail("opts.recipes.persist", "expected a boolean")

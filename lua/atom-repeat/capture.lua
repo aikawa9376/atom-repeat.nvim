@@ -30,6 +30,7 @@ M.ignore_next = input.ignore
 function M.begin_replay()
   state.replay_depth = state.replay_depth + 1
   reset_motion_run()
+  dot.break_join()
 end
 
 function M.end_replay()
@@ -57,20 +58,24 @@ local function should_store(atom, context)
   return limit == false or state.motion_run.count <= limit
 end
 
-local function record(atom, bufnr, keys, mapped)
+local function record(atom, bufnr, keys, mapped, repeated)
   if is_owned_buffer(bufnr) or not vim.api.nvim_buf_is_valid(bufnr) then
     reset_motion_run()
+    dot.break_join()
     return
   end
   local context = scope.resolve(bufnr)
   if should_store(atom, context) then
-    local entry = store.add(atom, context, keys)
+    local entry = store.add(atom, context, keys, repeated)
     dot.observe(bufnr, entry, mapped)
+  else
+    dot.break_join()
   end
 end
 
 function M.setup()
   reset_motion_run()
+  dot.break_join()
   vim.api.nvim_clear_autocmds({ group = group })
   input.setup(group, state.config.capture_lua_prompts, function(atom, bufnr)
     if state.replay_depth == 0 then
@@ -88,19 +93,22 @@ function M.setup()
       end
 
       local atom, bufnr = event.data, event.buf
-      local keys, mapped, ignored = input.take(atom, bufnr)
+      local keys, mapped, ignored, repeated = input.take(atom, bufnr)
       if ignored then
         reset_motion_run()
+        dot.break_join()
         return
       end
       -- Recording controls would start or stop a fresh recording during replay.
       if atom.type == "normal" and atom.cmd == "q"
         and (atom.keys == "q" or (atom.cmdarg or ""):match('^[%w"]$')) then
+        dot.break_join()
         return
       end
-      record(atom, bufnr, keys, mapped)
+      record(atom, bufnr, keys, mapped, repeated)
     end,
   })
+  vim.api.nvim_create_autocmd("BufLeave", { group = group, callback = dot.break_join })
   vim.api.nvim_create_autocmd({ "BufFilePost", "BufDelete" }, {
     group = group,
     callback = function(event)

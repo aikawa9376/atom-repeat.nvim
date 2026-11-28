@@ -114,6 +114,17 @@ register supplied to `.` overrides the prefix of the original edit. Ordinary
 edits still use Neovim's native dot repeat. After a history or saved-recipe
 replay succeeds, `.` repeats that recipe and `3.` runs it three times.
 
+Undo and redo keep the previous automatic repeat target. They stay available
+in history. Add keys to `dot.ignore` to skip other actions when choosing the
+automatic dot target or the latest edit for `:AtomReplayLast`.
+
+Set `dot.join_delete_insert = true` to repeat a deletion immediately followed
+by `i` as a single dot action. For example, after `diwitest<Esc>`, move to
+another word and press `.` to replace it with `test`. The same rule covers
+deletions such as `dw`, `d$`, and `dd`. A motion or another action between
+the deletion and insertion breaks the pair. A count or register given to dot
+applies to the deletion. History retains the two original actions.
+
 Existing Normal-mode `.` mappings keep precedence. You can bind
 `<Plug>(AtomRepeatDot)` to another key for automatic mapped-edit repeat.
 
@@ -147,6 +158,10 @@ require("atom-repeat").setup({
   max_buckets = 20,  -- least-recently-used bucket limit
   -- Keep all motions. Use 3 for the first three per run or 0 to omit them.
   max_consecutive_motions = false,
+  dot = {
+    ignore = {}, -- additional exact key sequences, e.g. { "<Leader>rf" }
+    join_delete_insert = false,
+  },
   recipes = {
     max_items = 20, -- unnamed recipes per project/branch
     persist = true,
@@ -163,6 +178,11 @@ Unknown options and invalid values are errors. Capacity and height must be
 positive integers; the motion limit is a non-negative integer or `false`.
 Calling `setup()` again preserves history, replaces plugin-owned interfaces
 without duplication, and immediately applies smaller capacity limits.
+
+`dot.ignore` accepts key notation such as `<F5>`. Each entry matches a
+complete action with its leading count and register removed. Undo and redo
+are excluded by default, including mappings on `u`, `U`, `<C-r>`, `g-`,
+and `g+`, and Ex undo history commands.
 
 Saved recipes use binary-safe MessagePack so raw key bytes survive a
 restart. The file is atomically replaced at

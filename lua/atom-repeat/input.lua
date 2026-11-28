@@ -282,7 +282,7 @@ local function take(start, last, keys, atom)
   if first > #chunks then
     reset_chunks()
   end
-  return repeated or keys, mapped, ignored
+  return keys, mapped, ignored, repeated
 end
 
 local function extends(keys, chunk, offset)
@@ -399,7 +399,7 @@ function M.take(atom, bufnr)
   local _, _, body = M.prefix(lhs)
   local operator = atom.atoms and atom.atoms[#atom.atoms] or atom
   local change = operator.operator == "c"
-  local insert = change or atom.type == "insert" or atom.type == "mapping" and lhs:sub(-1) == "\027"
+  local insert = change or operator.type == "insert" or atom.type == "mapping" and lhs:sub(-1) == "\027"
   local prefix = ""
   for start = first, #chunks do
     local chunk = chunks[start]

@@ -35,6 +35,10 @@ Setup is required and starts history capture: >lua
       history_size = 500,
       max_buckets = 20,
       max_consecutive_motions = false,
+      dot = {
+        ignore = {},
+        join_delete_insert = false,
+      },
       recipes = {
         max_items = 20,
         persist = true,
@@ -54,6 +58,11 @@ to include consumed keys in the triggering Insert mapping.
 of h, j, k, l, w, or b. The default false keeps all motions. Use 0 to omit them. A
 single-key callback mapping on one of those LHS keys also counts as navigation.
 A different Atom resets the run, and a counted command such as 3j is one Atom.
+`dot.ignore` accepts a list of extra key sequences to skip when choosing the
+automatic dot target or the latest edit for :AtomReplayLast. It matches a
+complete action in |key-notation| without its leading count and register.
+`dot.join_delete_insert` is false by default. Set it to true to join a
+deletion and an immediately following i for automatic dot repeat.
 `ui.height` is the bottom history split height.
 `recipes.max_items` limits unnamed recipes for each project/branch.
 `recipes.persist` enables MessagePack persistence. `recipes.path` defaults to
@@ -160,6 +169,16 @@ After a captured mapped edit, |.| runs the mapping again with its input. A
 count or register supplied to |.| overrides the original prefix. Ordinary edits
 use native dot. After a recipe replay succeeds, |.| repeats the recipe and a
 count selects how many times to run it.
+
+Undo and redo keep the previous automatic repeat target and stay in history.
+This includes mappings on u, U, CTRL-R, g- and g+, and the Ex undo history
+commands.
+
+With `dot.join_delete_insert` enabled, type diwitest<Esc>, move to another
+word, and use |.| to replace it with test. The rule also covers other deletes
+such as dw, d$ and dd. A motion or another action between the deletion and
+insertion breaks the pair. A count or register given to dot applies to the
+deletion. History retains both original actions.
 
 An existing Normal-mode `.` mapping keeps precedence. Bind
 `<Plug>(AtomRepeatDot)` to another key to use automatic mapped-edit repeat.
