@@ -177,20 +177,13 @@ function M.break_join()
   preceding_delete = nil
 end
 
-local function is_delete(atom, body)
+local function is_delete(atom)
   if atom.operator == "d" then
     return true
   end
-  if atom.type ~= "mapping" then
-    return false
-  end
-  if not atom.atoms then
-    -- A Lua dd mapping can use :normal! and leave no resolved operator.
-    return atom.keys == nil and (body == "dd" or body == "D")
-  end
   -- A mapped d can set marks before it runs the deletion.
   local deleted = false
-  for _, child in ipairs(atom.atoms) do
+  for _, child in ipairs(atom.type == "mapping" and atom.atoms or {}) do
     if child.changed then
       if not is_delete(child) then
         return false
@@ -237,10 +230,9 @@ function M.observe(bufnr, entry, mapped)
     and (mapped or mapped_operator or atom.keys == nil or atom.operator == "g@" or atom.type == "excmd")
 
   if state.config.dot.join_delete_insert and entry.replay_kind == "lhs" then
-    local body = repeat_filter.body(entry)
-    if is_delete(atom, body) then
+    if is_delete(atom) then
       preceding_delete = { buf = bufnr, entry = entry }
-    elseif previous and previous.buf == bufnr and is_i_insert(atom, body) then
+    elseif previous and previous.buf == bufnr and is_i_insert(atom, repeat_filter.body(entry)) then
       entry = {
         replay_kind = "lhs",
         replay_value = previous.entry.replay_value .. entry.replay_value,

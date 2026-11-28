@@ -71,6 +71,30 @@ local function finish_operator()
   end
 end
 
+local function earlier(index, bufnr, mode)
+  local key = index >= first and chunks[index]
+  return key and key.buf == bufnr and key.mode == mode and key.typed or ""
+end
+
+local function include_count(start, bufnr, mode)
+  for index = start - 1, first, -1 do
+    local key = earlier(index, bufnr, mode)
+    if not key:match("^%d$") then
+      break
+    end
+    if key ~= "0" then
+      start = index
+    end
+  end
+  return start
+end
+
+local function normal_prefix_start(start, bufnr)
+  start = include_count(start, bufnr, "n")
+  local _, register = M.prefix(earlier(start - 2, bufnr, "n") .. earlier(start - 1, bufnr, "n"))
+  return register and include_count(start - 2, bufnr, "n") or start
+end
+
 local function watch_operator(chunk)
   -- Expressions such as lazy.nvim's first-use mappings can requeue an
   -- operator's text object without marking the requeued keys as typed.
@@ -81,37 +105,41 @@ local function watch_operator(chunk)
   if not (operator == "c" or operator == "d" or operator == "y") then
     return
   end
-  local function earlier(index, mode)
-    local key = index >= first and chunks[index]
-    return key and key.buf == chunk.buf and key.mode == mode and key.typed or ""
-  end
-  local function include_count(start, mode)
-    for index = start - 1, first, -1 do
-      local key = earlier(index, mode)
-      if not key:match("^%d$") then
-        break
-      end
-      if key ~= "0" then
-        start = index
-      end
-    end
-    return start
-  end
-  local motion = include_count(#chunks, chunk.mode)
-  if earlier(motion - 1, "n") ~= operator then
+  local motion = include_count(#chunks, chunk.buf, chunk.mode)
+  if earlier(motion - 1, chunk.buf, "n") ~= operator then
     return
   end
-  local start = include_count(motion - 1, "n")
-  local _, register = M.prefix(earlier(start - 2, "n") .. earlier(start - 1, "n"))
-  if register then
-    start = include_count(start - 2, "n")
-  end
-  pending_operator = { start = start, buf = chunk.buf, name = operator, tick = vim.b.changedtick }
+  pending_operator = {
+    start = normal_prefix_start(motion - 1, chunk.buf),
+    buf = chunk.buf,
+    name = operator,
+    tick = vim.b.changedtick,
+  }
 end
 
-function M.setup(group, capture_lua_prompts, on_missing_operator)
+local function watch_mapped_delete(confirmed)
+  local chunk = #chunks >= first and chunks[#chunks]
+  if pending_operator or not chunk or chunk.mode ~= "n" or not chunk.mapped or chunk.ignored then
+    return
+  end
+  -- A Lua mapping can run a deletion with :normal! after the loader
+  -- requeues it. Its operator-pending keys arrive without typed bytes.
+  if chunk.buf == vim.api.nvim_get_current_buf()
+    and (confirmed or vim.v.operator == "d" and vim.startswith(vim.api.nvim_get_mode().mode, "no")) then
+    pending_operator = {
+      start = normal_prefix_start(#chunks, chunk.buf),
+      mapping = #chunks,
+      buf = chunk.buf,
+      name = "d",
+      tick = vim.b.changedtick,
+    }
+  end
+end
+
+function M.setup(group, config, on_missing_operator)
   M.reset()
   record_operator = on_missing_operator
+  local capture_lua_prompts = config.capture_lua_prompts
   setup_readers(capture_lua_prompts)
   vim.on_key(function(key, typed)
     prompt_chunk = nil
@@ -134,13 +162,19 @@ function M.setup(group, capture_lua_prompts, on_missing_operator)
       if capture_lua_prompts and chunk.mapped and chunk.mode:match("^[iR]") then
         prompt_chunk = chunk
       end
+    elseif config.dot.join_delete_insert then
+      watch_mapped_delete()
     end
   end, namespace)
   vim.api.nvim_create_autocmd("TextYankPost", {
     group = group,
     callback = function(event)
-      if pending_operator and pending_operator.buf == event.buf and vim.v.event.operator == "y" then
+      local operator = vim.v.event.operator
+      if pending_operator and pending_operator.buf == event.buf and operator == "y" then
         pending_operator.yanked = true
+      elseif config.dot.join_delete_insert and operator == "d" then
+        -- Shortcuts such as D do not read an operator-pending key.
+        watch_mapped_delete(true)
       end
     end,
   })
@@ -263,13 +297,19 @@ end
 local function take(start, last, keys, atom)
   flush_operators(start)
   local operator = completed_operators[1]
+  local resolved_operator
   if operator and operator.start >= first and operator.start <= last and operator.last >= start
-    and atom.operator == operator.name and atom.undoseq == operator.undoseq then
-    -- The native atom can contain the loader's resolved motion. Keep the
-    -- native metadata and replace its input with the original mapping.
+    and atom.undoseq == operator.undoseq
+    and (atom.operator == operator.name or operator.mapping and start <= operator.mapping and operator.mapping <= last) then
     table.remove(completed_operators, 1)
-    keys = typed_keys(operator.start, operator.last, "")
-    start, last = operator.start, operator.last
+    if not operator.mapping then
+      -- The native atom can contain the loader's resolved motion. Keep the
+      -- native metadata and replace its input with the original mapping.
+      keys = typed_keys(operator.start, operator.last, "")
+      start, last = operator.start, operator.last
+    elseif atom.type == "mapping" and atom.keys == nil and not atom.atoms and operator.mapping == operator.last then
+      resolved_operator = operator.name
+    end
   end
   local mapped, ignored = false, false
   local repeated
@@ -282,7 +322,7 @@ local function take(start, last, keys, atom)
   if first > #chunks then
     reset_chunks()
   end
-  return keys, mapped, ignored, repeated
+  return keys, mapped, ignored, repeated, resolved_operator
 end
 
 local function extends(keys, chunk, offset)

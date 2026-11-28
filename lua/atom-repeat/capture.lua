@@ -77,7 +77,7 @@ function M.setup()
   reset_motion_run()
   dot.break_join()
   vim.api.nvim_clear_autocmds({ group = group })
-  input.setup(group, state.config.capture_lua_prompts, function(atom, bufnr)
+  input.setup(group, state.config, function(atom, bufnr)
     if state.replay_depth == 0 then
       record(atom, bufnr, nil, true)
     end
@@ -93,7 +93,7 @@ function M.setup()
       end
 
       local atom, bufnr = event.data, event.buf
-      local keys, mapped, ignored, repeated = input.take(atom, bufnr)
+      local keys, mapped, ignored, repeated, resolved_operator = input.take(atom, bufnr)
       if ignored then
         reset_motion_run()
         dot.break_join()
@@ -104,6 +104,9 @@ function M.setup()
         and (atom.keys == "q" or (atom.cmdarg or ""):match('^[%w"]$')) then
         dot.break_join()
         return
+      end
+      if resolved_operator then
+        atom = vim.tbl_extend("keep", { operator = resolved_operator }, atom)
       end
       record(atom, bufnr, keys, mapped, repeated)
     end,

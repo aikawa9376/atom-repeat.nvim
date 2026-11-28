@@ -403,6 +403,44 @@ test("joined dot recognizes delete operators inside a composite d mapping", func
   atom_repeat.setup()
 end)
 
+test("joined dot recovers an opaque delete mapping on its first use", function()
+  reset_history()
+  atom_repeat.setup({ dot = { join_delete_insert = true } })
+  local buf = fresh_buffer({ "remove", "one two", "remove again", "abc def" })
+  local opts = { buffer = buf }
+  vim.keymap.set("n", "<F7>", function()
+    vim.keymap.set("n", "<F7>", function()
+      vim.cmd.normal({ bang = true, args = { '"_dd' } })
+    end, opts)
+    vim.api.nvim_feedkeys(vim.keycode("<Ignore><F7>"), "i", false)
+  end, { buffer = buf, expr = true })
+
+  vim.api.nvim_input("<F7>itest<Esc>j0.")
+  wait_for(function() return vim.api.nvim_buf_line_count(buf) == 2 end)
+  eq({ "testone two", "testabc def" }, vim.api.nvim_buf_get_lines(buf, 0, -1, false))
+  local entries = current_bucket().entries
+  eq("d", entries[1].atom.operator, "the recovered action carries the resolved delete")
+  eq(vim.keycode("<F7>"), entries[1].replay_value, "replay uses the original mapping keys")
+  eq(vim.keycode("<F7>itest<Esc>"), entries[5].replay_value, "the history records the complete repeat")
+  atom_repeat.setup()
+end)
+
+test("joined dot resolves a Lua mapping that uses a delete shortcut", function()
+  reset_history()
+  atom_repeat.setup({ dot = { join_delete_insert = true } })
+  local buf = fresh_buffer({ "one two", "abc def" })
+  vim.keymap.set("n", "Q", function()
+    vim.cmd.normal({ bang = true, args = { "D" } })
+  end, { buffer = buf })
+
+  vim.api.nvim_input("Qitest<Esc>j0.")
+  wait_for(function() return vim.api.nvim_buf_get_lines(buf, 1, 2, false)[1] == "test" end)
+  local entries = current_bucket().entries
+  eq("d", entries[1].atom.operator, "the opaque mapping uses the delete operator")
+  eq("Qitest\027", entries[5].replay_value, "history replays the mapping by its typed key")
+  atom_repeat.setup()
+end)
+
 test("a motion breaks delete and insert grouping even when omitted from history", function()
   reset_history()
   atom_repeat.setup({ max_consecutive_motions = 0, dot = { join_delete_insert = true } })
