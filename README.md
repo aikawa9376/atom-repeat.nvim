@@ -119,11 +119,12 @@ in history. Add keys to `dot.ignore` to skip other actions when choosing the
 automatic dot target or the latest edit for `:AtomReplayLast`.
 
 Set `dot.join_delete_insert = true` to repeat a deletion immediately followed
-by `i` as a single dot action. For example, after `diwitest<Esc>`, move to
+by `i` as a single action with `.` or when `:AtomReplayLast` uses the latest
+edit. For example, after `diwitest<Esc>`, move to
 another word and press `.` to replace it with `test`. The same rule covers
 deletions such as `dw`, `d$`, and `dd`. A motion or another action between
 the deletion and insertion breaks the pair. A count or register given to dot
-applies to the deletion. History retains the two original actions.
+applies to the deletion. To replay the pair from history, select both rows.
 
 Existing Normal-mode `.` mappings keep precedence. You can bind
 `<Plug>(AtomRepeatDot)` to another key for automatic mapped-edit repeat.

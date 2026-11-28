@@ -1005,6 +1005,20 @@ test("AtomReplayLast repeats a recent change without selecting or saving a recip
   eq({ "test", "new", "new" }, vim.api.nvim_buf_get_lines(buf, 0, -1, false))
 end)
 
+test("AtomReplayLast replays a joined native delete and insert as the latest edit", function()
+  reset_history()
+  atom_repeat.setup({ dot = { join_delete_insert = true } })
+  local buf = fresh_buffer({ "one} two", "three} four" })
+
+  vim.api.nvim_input("df}itest<Esc>j0:AtomReplayLast<CR>")
+  wait_for(function() return vim.api.nvim_buf_get_lines(buf, 1, 2, false)[1] == "test four" end)
+  eq({ "test two", "test four" }, vim.api.nvim_buf_get_lines(buf, 0, -1, false))
+  local entries = current_bucket().entries
+  eq("df}", entries[1].replay_value, "the delete history row can still be replayed by itself")
+  eq("itest\027", entries[2].replay_value, "the insert history row can still be replayed by itself")
+  atom_repeat.setup()
+end)
+
 test("AtomReplayLast finishes a plugin mapping with a pending prefix and no timeout", function()
   reset_history()
   local buf = fresh_buffer({ "line", "next" })

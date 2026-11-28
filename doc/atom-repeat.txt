@@ -62,7 +62,8 @@ A different Atom resets the run, and a counted command such as 3j is one Atom.
 automatic dot target or the latest edit for :AtomReplayLast. It matches a
 complete action in |key-notation| without its leading count and register.
 `dot.join_delete_insert` is false by default. Set it to true to join a
-deletion and an immediately following i for automatic dot repeat.
+deletion and an immediately following i for automatic dot repeat and for
+the latest edit fallback of :AtomReplayLast.
 `ui.height` is the bottom history split height.
 `recipes.max_items` limits unnamed recipes for each project/branch.
 `recipes.persist` enables MessagePack persistence. `recipes.path` defaults to
@@ -178,7 +179,7 @@ With `dot.join_delete_insert` enabled, type diwitest<Esc>, move to another
 word, and use |.| to replace it with test. The rule also covers other deletes
 such as dw, d$ and dd. A motion or another action between the deletion and
 insertion breaks the pair. A count or register given to dot applies to the
-deletion. History retains both original actions.
+deletion. To replay the pair from history, select both rows.
 
 An existing Normal-mode `.` mapping keeps precedence. Bind
 `<Plug>(AtomRepeatDot)` to another key to use automatic mapped-edit repeat.

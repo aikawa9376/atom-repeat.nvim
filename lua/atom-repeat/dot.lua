@@ -233,9 +233,10 @@ function M.observe(bufnr, entry, mapped)
     if is_delete(atom) then
       preceding_delete = { buf = bufnr, entry = entry }
     elseif previous and previous.buf == bufnr and is_i_insert(atom, repeat_filter.body(entry)) then
+      entry.joined_replay_value = previous.entry.replay_value .. entry.replay_value
       entry = {
         replay_kind = "lhs",
-        replay_value = previous.entry.replay_value .. entry.replay_value,
+        replay_value = entry.joined_replay_value,
         seq = entry.seq,
       }
       use_lhs = true
