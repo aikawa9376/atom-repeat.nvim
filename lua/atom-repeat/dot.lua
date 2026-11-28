@@ -178,9 +178,27 @@ function M.break_join()
 end
 
 local function is_delete(atom, body)
-  -- A Lua dd mapping can use :normal! and leave no resolved operator.
-  return atom.operator == "d"
-    or (atom.type == "mapping" and atom.keys == nil and (body == "dd" or body == "D"))
+  if atom.operator == "d" then
+    return true
+  end
+  if atom.type ~= "mapping" then
+    return false
+  end
+  if not atom.atoms then
+    -- A Lua dd mapping can use :normal! and leave no resolved operator.
+    return atom.keys == nil and (body == "dd" or body == "D")
+  end
+  -- A mapped d can set marks before it runs the deletion.
+  local deleted = false
+  for _, child in ipairs(atom.atoms) do
+    if child.changed then
+      if not is_delete(child) then
+        return false
+      end
+      deleted = true
+    end
+  end
+  return deleted
 end
 
 local function is_i_insert(atom, body)
